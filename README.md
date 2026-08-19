@@ -42,6 +42,18 @@ actually use, on a codebase that can keep evolving:
 * **Primer design across an alignment** – conserved (universal) or discriminating
   (eDNA) primers using sequence groups, conservation masking, 3'-weighted mismatch
   scoring, IUPAC-degenerate options and an in-silico PCR table.
+* **Restriction sites** – REBASE enzymes (Biopython) with supplier/site-length/ends
+  filters; map one sequence, or compare across an alignment to find enzymes that
+  *distinguish* sequences; unique cutters, non-cutters, circular molecules, digests,
+  sites as features, CSV export.
+* **GenBank export with two genetic codes** – ORF-finder results can be written into
+  a GenBank record alongside the canonical annotation, each feature carrying its own
+  `/transl_table`: mitochondrial genes keep the mitochondrial code while
+  cytoplasmically-translated ORFs (mitochondrial-derived peptides such as humanin,
+  MOTS-c and the SHLPs) are written with the standard code and an explanatory note,
+  so any GenBank viewer shows both classes in context. ORFs can be named from
+  reference peptides by sequence similarity, and appear as their own tracks
+  (one per genetic code) beneath the gene models in the genome view.
 * **Analysis** – identity matrix, entropy/identity conservation plots, sequence
   statistics, consensus report, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
   NCBI BLAST launcher.

@@ -27,6 +27,7 @@ from .dialogs.translate_dialog import TranslateDialog
 from .dialogs.orf_dialog import ORFFinderDialog
 from .dialogs.primer_dialog import PrimerDialog
 from .dialogs.design_dialog import DesignDialog
+from .dialogs.restriction_dialog import RestrictionDialog
 from .dialogs.misc_dialogs import (FindDialog, StatsDialog, IdentityDialog, PlotDialog, AlignDialog,
                                    PreferencesDialog, NewSequenceDialog)
 from .dialogs.common import TextDialog
@@ -223,6 +224,8 @@ class MainWindow(QMainWindow):
         self.a_primer = A("&Primer design (single template)…", self.primer_design, "Ctrl+Shift+P")
         self.a_design = A("&Conserved / discriminating primers…", self.design_primers, "Ctrl+Shift+D",
                           tip="Design primers across the alignment: universal for a group, or discriminating against another group (eDNA)")
+        self.a_restrict = A("&Restriction sites…", self.restriction_sites, "Ctrl+Shift+R",
+                            tip="Restriction map of one sequence, or which enzymes distinguish sequences in the alignment")
         self.a_stats = A("Sequence &statistics", self.stats)
         self.a_ident = A("&Identity matrix", self.identity)
         self.a_plot = A("&Conservation / entropy plot", self.plot)
@@ -243,6 +246,7 @@ class MainWindow(QMainWindow):
         self.a_g_goto = A("Go to &region / gene…", self.genome_goto, "Ctrl+J")
         self.a_g_openreg = A("Open current region in &new editor window", lambda: self._genome_open_region(*self.genome_panel.window()))
         self.a_g_clear = A("&Close genome (keep sequence)", self.genome_close)
+        self.a_g_orfclear = A("Clear ORF &tracks", lambda: self.genome_panel.clear_orf_tracks())
         self.a_g_circ = A("Circular &map (mitogenome / plasmid)…", self.circular_map, "Ctrl+Shift+M",
                           tip="Circular gene map with GC content and GC skew; export as SVG or PNG")
 
@@ -308,11 +312,11 @@ class MainWindow(QMainWindow):
             al.addAction(a) if a else al.addSeparator()
 
         an = mb.addMenu("A&nalysis")
-        for a in (self.a_orf, self.a_primer, self.a_design, None, self.a_stats, self.a_ident, self.a_plot, self.a_cons_report):
+        for a in (self.a_orf, self.a_primer, self.a_design, self.a_restrict, None, self.a_stats, self.a_ident, self.a_plot, self.a_cons_report):
             an.addAction(a) if a else an.addSeparator()
 
         gm = mb.addMenu("&Genome")
-        for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_circ, self.a_g_goto, self.a_g_openreg, None, self.a_g_clear):
+        for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_circ, self.a_g_goto, self.a_g_openreg, self.a_g_orfclear, None, self.a_g_clear):
             gm.addAction(a) if a else gm.addSeparator()
 
         h = mb.addMenu("&Help")
@@ -993,6 +997,7 @@ class MainWindow(QMainWindow):
         d = ORFFinderDialog(self.model, rows, self, int(self.settings.value("default_table", 1)))
         d.orfSelected.connect(lambda r, s, e: self.view.select_region(r, r, s, e - 1))
         d.featuresReady.connect(self._add_features)
+        d.orfsFound.connect(self._orfs_to_track)
         d.show(); self._children.append(d)
 
     def primer_design(self):
@@ -1008,6 +1013,16 @@ class MainWindow(QMainWindow):
         d.featuresReady.connect(self._add_features)
         d.show(); self._children.append(d)
 
+    def restriction_sites(self):
+        if not self.model.nrows:
+            return
+        if not self.model.is_nucleotide():
+            QMessageBox.information(self, "Restriction sites", "Needs nucleotide sequences."); return
+        d = RestrictionDialog(self.model, self.view, self)
+        d.featuresReady.connect(self._add_features)
+        d.siteSelected.connect(lambda r, a, b: self.view.select_region(r, r, a, b - 1))
+        d.show(); self._children.append(d)
+
     def design_primers(self):
         if self.model.nrows < 2:
             QMessageBox.information(self, "Design", "Load an alignment of at least two sequences first."); return
@@ -1017,6 +1032,37 @@ class MainWindow(QMainWindow):
         d.featuresReady.connect(self._add_features)
         d.regionSelected.connect(lambda a, b: self.view.select_region(0, self.model.nrows - 1, a, b - 1))
         d.show(); self._children.append(d)
+
+    ORF_TRACK_COLORS = {1: "#7d3c98", 2: "#0e7490", 3: "#b45309", 4: "#166534", 5: "#9d174d"}
+
+    def _orfs_to_track(self, orfs, table: int):
+        """Show ORF-finder results as their own track under the gene models."""
+        if not self.genome_panel.isVisible() and not orfs:
+            return
+        ref_row = 0
+        proj = self.proj()
+        items = []
+        for o in orfs:
+            if o.row != ref_row:
+                continue
+            s0 = proj.col_to_ref(o.start) if not proj.identity else o.start
+            e0 = proj.col_to_ref(o.end) if not proj.identity else o.end
+            partial = ("5'" if o.partial5 else "") + ("3'" if o.partial3 else "")
+            tip = (f"<b>{o.name or 'ORF'}</b> {s0 + 1:,}-{e0:,} ({'+' if o.strand > 0 else '-'}{o.frame})<br>"
+                   f"{o.length_aa} aa, start {o.start_codon}, stop {o.stop_codon or 'none'}"
+                   f"{', partial ' + partial if partial else ''}<br>genetic code {o.table}"
+                   + (f"<br>{o.extra['note']}" if o.extra.get('note') else ""))
+            items.append((s0, e0, o.strand, o.name or f"{o.length_aa}aa", tip))
+        if not items:
+            return
+        label = f"code {table}"
+        self.genome_panel.add_orf_track(label, items, self.ORF_TRACK_COLORS.get(table, "#7d3c98"))
+        if not self.genome_panel.isVisible() and self.model.nrows:
+            if self.annotation is None:
+                self._enter_reference_mode(None)
+            else:
+                self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
+        self.statusBar().showMessage(f"ORF track '{label}': {len(items)} ORFs shown under the gene models", 5000)
 
     def _add_features(self, feats):
         self.model.features.extend(feats)

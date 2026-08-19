@@ -170,11 +170,13 @@ class RegionView(QWidget):
         self.fetch_seq = None               # callable(start,end)->str for base-level drawing
         self.fetch_var = None               # callable(start,end)->list[float] per-ref-position variant freq (or None)
         self.expanded = False               # show all transcripts
+        self.orf_tracks: list[dict] = []     # [{"label":str,"color":str,"items":[(s,e,strand,name,tip)]}]
         self.setMinimumHeight(150)
         self.setMouseTracking(True)
         self._drag = None
         self._gene_hits: list[tuple[QRectF, Gene, Transcript]] = []
         self._syn_hits: list[tuple[QRectF, SyntenyBlock]] = []
+        self._orf_hits: list[tuple[QRectF, str, str]] = []
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     # --------------------------------------------------------------- state
@@ -204,7 +206,7 @@ class RegionView(QWidget):
         W, H = self.width(), self.height()
         s, e = self.win
         left, right = 40, W - 8
-        self._gene_hits.clear(); self._syn_hits.clear()
+        self._gene_hits.clear(); self._syn_hits.clear(); self._orf_hits.clear()
         f = self.font(); f.setPointSize(8); p.setFont(f); fm = QFontMetrics(f)
 
         # ruler
@@ -279,6 +281,41 @@ class RegionView(QWidget):
         y = y0 + min(len(lanes), max_lanes) * lane_h + 6
         if not genes and self.ann is None:
             p.setPen(QColor("#888")); p.drawText(QPointF(left, y0 + 14), "No annotation loaded (Genome ▸ Load annotation…)")
+
+        # ORF tracks (below the canonical gene models)
+        if self.orf_tracks:
+            p.setPen(QPen(QColor("#ccc"), 1))
+            p.drawLine(left, y + 1, right, y + 1)
+            y += 4
+            for track in self.orf_tracks:
+                col = QColor(track.get("color", "#7d3c98"))
+                vis = [(a, b, st, nm, tip) for (a, b, st, nm, tip) in track["items"] if b > s and a < e]
+                lanes = pack_lanes([(int(self._x(a)), int(self._x(b)) + fm.horizontalAdvance(nm) + 6, (a, b, st, nm, tip))
+                                    for (a, b, st, nm, tip) in vis], gap=4)
+                p.setPen(QColor("#555"))
+                p.drawText(QPointF(2, y + 9), track["label"][:6])
+                lh = 13
+                maxl = max(1, min(len(lanes), (H - y - (34 if self.synteny else 6)) // lh))
+                for li, lane in enumerate(lanes[:maxl]):
+                    yy = y + li * lh
+                    for _a0, _a1, (a, b, st, nm, tip) in lane:
+                        x0, x1 = max(left, self._x(a)), min(right, self._x(b))
+                        w = max(2.0, x1 - x0)
+                        p.setPen(Qt.NoPen); p.setBrush(col if st > 0 else col.darker(130))
+                        p.drawRect(QRectF(x0, yy + 1, w, 7))
+                        # strand tick
+                        p.setPen(QPen(col.darker(160), 1))
+                        if st > 0:
+                            p.drawLine(QPointF(x1, yy + 1), QPointF(x1 + 3, yy + 4.5)); p.drawLine(QPointF(x1 + 3, yy + 4.5), QPointF(x1, yy + 8))
+                        else:
+                            p.drawLine(QPointF(x0, yy + 1), QPointF(x0 - 3, yy + 4.5)); p.drawLine(QPointF(x0 - 3, yy + 4.5), QPointF(x0, yy + 8))
+                        if w > fm.horizontalAdvance(nm) * 0.6:
+                            p.setPen(QColor("#222")); p.drawText(QPointF(x0 + 2, yy + 8), nm)
+                        self._orf_hits.append((QRectF(x0, yy, w, 9), nm, tip))
+                y += maxl * lh + 3
+                if len(lanes) > maxl:
+                    p.setPen(QColor("#a00")); p.drawText(QPointF(left, y + 8), f"… {len(lanes) - maxl} more ORF rows")
+                    y += 10
 
         # synteny track (bottom)
         if self.synteny:
@@ -388,6 +425,11 @@ class RegionView(QWidget):
             QToolTip.showText(QCursor.pos(), info, self)
             self.hoverInfo.emit(f"{g.name}  {g.seqid}:{fmt_bp(g.start + 1)}-{fmt_bp(g.end)} ({'+' if g.strand > 0 else '-'})")
             return
+        for r, nm, tip in self._orf_hits:
+            if r.contains(pos):
+                QToolTip.showText(QCursor.pos(), tip, self)
+                self.setCursor(Qt.PointingHandCursor)
+                return
         for r, blk in self._syn_hits:
             if r.contains(pos):
                 QToolTip.showText(QCursor.pos(), f"{blk.qname}:{fmt_bp(blk.qstart + 1)}-{fmt_bp(blk.qend)} {'+' if blk.strand > 0 else '-'} → "
@@ -403,6 +445,12 @@ class RegionView(QWidget):
             if h:
                 g, t = h
                 self.focusRequested.emit(g.start, g.end)
+            elif any(r.contains(e.position()) for r, _n, _t in self._orf_hits):
+                for r, _n, _t in self._orf_hits:
+                    if r.contains(e.position()):
+                        a = self._pos(r.left()); b = self._pos(r.right())
+                        self.focusRequested.emit(a, max(b, a + 1))
+                        break
             else:
                 c = self._pos(e.position().x())
                 self.focusRequested.emit(c, c)
@@ -492,6 +540,21 @@ class GenomePanel(QWidget):
         self.ann = ann; self.region.ann = ann
         self._update_density()
         self.region.update()
+
+    def add_orf_track(self, label: str, items: list[tuple[int, int, int, str, str]], color: str = "#7d3c98",
+                      replace: bool = True):
+        """items: (start, end, strand, name, tooltip) in reference coordinates."""
+        if replace:
+            self.region.orf_tracks = [t for t in self.region.orf_tracks if t["label"] != label]
+        self.region.orf_tracks.append({"label": label, "color": color, "items": items})
+        self.region.update()
+
+    def clear_orf_tracks(self):
+        self.region.orf_tracks = []
+        self.region.update()
+
+    def orf_track_labels(self) -> list[str]:
+        return [t["label"] for t in self.region.orf_tracks]
 
     def set_synteny(self, blocks: list[SyntenyBlock]):
         blocks = [b for b in blocks if b.qname == self.seqid]
