@@ -7,3 +7,6 @@ dist/
 .venv/
 *.spec
 .DS_Store
+
+# user data (not distributed)
+*.bio

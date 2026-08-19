@@ -12,6 +12,7 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 from .alignment import AlignmentModel, SequenceRow, GAP_CHARS
+from . import bioedit_format as BIO
 
 # (label, biopython format name, extensions, is_alignment_format)
 FORMATS = [
@@ -25,7 +26,8 @@ FORMATS = [
     ("GenBank", "genbank", [".gb", ".gbk", ".genbank"], False),
     ("EMBL", "embl", [".embl"], False),
     ("MSF", "msf", [".msf"], True),
-    ("BioEdit (.bio)", "bio", [".bio"], True),
+    ("BioEdit project (.bio)", "bio", [".bio"], True),
+    ("GenBank (BioEdit dialect)", "genbank-bioedit", [".gb"], False),
 ]
 
 EXT_TO_FORMAT = {}
@@ -35,6 +37,8 @@ for _label, _fmt, _exts, _ in FORMATS:
 
 
 def guess_format(path: str, text_head: str | None = None) -> str:
+    if BIO.is_bio_file(path):
+        return "bio"
     ext = os.path.splitext(path)[1].lower()
     if ext in EXT_TO_FORMAT and ext != ".txt":
         return EXT_TO_FORMAT[ext]
@@ -80,6 +84,14 @@ def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
     fmt = fmt or guess_format(path)
     if fmt == "bio":
         rows = _read_bio(path)
+    elif fmt == "genbank-bioedit":
+        rows = BIO.read_genbank_bioedit(path)
+        if not rows:
+            with open(path, "r", errors="replace") as fh:
+                rows = _rows_from_records(SeqIO.parse(fh, "genbank"))
+            for r, t in zip(rows, BIO.genbank_titles(path)):
+                if t:
+                    r.name = t
     else:
         with open(path, "r", errors="replace") as fh:
             try:
@@ -130,7 +142,10 @@ def dumps(model: AlignmentModel, fmt: str, rows=None) -> str:
     _label, _, _, is_aln = next((f for f in FORMATS if f[1] == fmt), (fmt, fmt, [], False))
     out = io.StringIO()
     if fmt == "bio":
-        return _write_bio(model)
+        raise ValueError("BioEdit .bio is binary; use save()")
+    if fmt == "genbank-bioedit":
+        return BIO.write_genbank_bioedit(model.rows if rows is None else [model.rows[i] for i in rows],
+                                         model.seq_type)
     if is_aln:
         w = max((len(r.seq) for r in recs), default=0)
         for r in recs:
@@ -153,10 +168,14 @@ def dumps(model: AlignmentModel, fmt: str, rows=None) -> str:
 
 
 def save(model: AlignmentModel, path: str, fmt: Optional[str] = None):
-    fmt = fmt or model.format or guess_format(path)
-    text = dumps(model, fmt)
-    with open(path, "w") as fh:
-        fh.write(text)
+    fmt = fmt or model.format or (guess_format(path) if os.path.exists(path) else
+                                  EXT_TO_FORMAT.get(os.path.splitext(path)[1].lower(), "fasta"))
+    if fmt == "bio":
+        BIO.write_bio(path, model.rows, model.seq_type)
+    else:
+        text = dumps(model, fmt)
+        with open(path, "w") as fh:
+            fh.write(text)
     model.path = path
     model.format = fmt
     model.dirty = False
@@ -169,6 +188,16 @@ def save(model: AlignmentModel, path: str, fmt: Optional[str] = None):
 # falls back to treating anything after a line that ends with "data" as rows.
 
 def _read_bio(path: str) -> list[SequenceRow]:
+    """BioEdit Project file (binary). Falls back to a text scan for hand-made files."""
+    try:
+        rows, _info = BIO.read_bio(path)
+        return rows
+    except Exception:
+        pass
+    return _read_bio_text(path)
+
+
+def _read_bio_text(path: str) -> list[SequenceRow]:
     with open(path, "r", errors="replace") as fh:
         lines = fh.read().splitlines()
     rows: dict[str, SequenceRow] = {}
@@ -192,7 +221,6 @@ def _read_bio(path: str) -> list[SequenceRow]:
             order.append(name)
         rows[name].seq += seq
     if not rows:
-        # last resort: maybe it's actually FASTA
         with open(path, "r", errors="replace") as fh:
             try:
                 return _rows_from_records(SeqIO.parse(fh, "fasta"))
@@ -201,9 +229,3 @@ def _read_bio(path: str) -> list[SequenceRow]:
     return [rows[n] for n in order]
 
 
-def _write_bio(model: AlignmentModel) -> str:
-    out = ["NeoEdit alignment file", "", "sequence data"]
-    w = max((len(r.name) for r in model.rows), default=4)
-    for r in model.rows:
-        out.append(f"{r.name.ljust(w)}  {r.seq}")
-    return "\n".join(out) + "\n"

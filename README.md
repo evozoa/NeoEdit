@@ -57,8 +57,10 @@ actually use, on a codebase that can keep evolving:
 * **Analysis** – identity matrix, entropy/identity conservation plots, sequence
   statistics, consensus report, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
   NCBI BLAST launcher.
-* **Formats** – FASTA, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, EMBL, MSF and a
-  best-effort reader for legacy BioEdit `.bio` files.
+* **Formats** – FASTA, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, EMBL, MSF, plus
+  full support for BioEdit's own formats: the binary `.bio` project file is read and
+  written byte-for-byte as BioEdit 7 writes it, and GenBank can be read/written in
+  BioEdit's dialect (top-level `TITLE`, residues in blocks of five).
 
 ## Install & run
 
