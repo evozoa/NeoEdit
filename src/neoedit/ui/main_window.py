@@ -524,7 +524,19 @@ class MainWindow(QMainWindow):
         self._set_model(model)
         self.settings.setValue("last_dir", os.path.dirname(path))
         self._add_recent(path)
-        self.statusBar().showMessage(f"Opened {path} ({model.nrows} sequences, format {model.format})", 5000)
+        msg = f"Opened {path} ({model.nrows} sequences, format {model.format})"
+        # An annotated GenBank/EMBL record is a reference: populate the genome view from
+        # its own features so gene models (and any ORF tracks) have somewhere to live.
+        if model.format in ("genbank", "embl") and model.nrows == 1:
+            try:
+                ann = GA.load_annotation(path)
+            except Exception:
+                ann = None
+            if ann is not None and ann.count():
+                model.features = []
+                self._enter_reference_mode(ann)
+                msg += f" — genome view: {ann.count()} annotated features"
+        self.statusBar().showMessage(msg, 6000)
 
     def import_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Import sequences", self.settings.value("last_dir", ""), FILE_FILTER)
@@ -1058,10 +1070,11 @@ class MainWindow(QMainWindow):
         label = f"code {table}"
         self.genome_panel.add_orf_track(label, items, self.ORF_TRACK_COLORS.get(table, "#7d3c98"))
         if not self.genome_panel.isVisible() and self.model.nrows:
-            if self.annotation is None:
-                self._enter_reference_mode(None)
+            if self.genome_contig is None:
+                self._enter_reference_mode(self.annotation)
             else:
                 self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
+            self.genome_panel.add_orf_track(label, items, self.ORF_TRACK_COLORS.get(table, "#7d3c98"))
         self.statusBar().showMessage(f"ORF track '{label}': {len(items)} ORFs shown under the gene models", 5000)
 
     def _add_features(self, feats):
