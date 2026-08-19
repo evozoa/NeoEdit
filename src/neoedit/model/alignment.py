@@ -24,6 +24,7 @@ class SequenceRow:
     seq: str
     description: str = ""
     id: str = ""
+    group: str = ""
 
     def __len__(self) -> int:
         return len(self.seq)
@@ -32,7 +33,7 @@ class SequenceRow:
         return self.seq.translate(_GAP_TABLE)
 
     def copy(self) -> "SequenceRow":
-        return SequenceRow(self.name, self.seq, self.description, self.id)
+        return SequenceRow(self.name, self.seq, self.description, self.id, self.group)
 
 
 @dataclass
@@ -72,6 +73,7 @@ class AlignmentModel:
         self.rows: list[SequenceRow] = list(rows or [])
         self.features: list[Feature] = []
         self._seq_type = seq_type
+        self.group_colors: dict[str, str] = {}
         self._detected_type = None
         self._undo: list[_Edit] = []
         self._redo: list[_Edit] = []
@@ -409,6 +411,35 @@ class AlignmentModel:
 
     def rna_to_dna(self, rows: Iterable[int]):
         self._transform(rows, lambda s: s.replace("U", "T").replace("u", "t"), "RNA -> DNA")
+
+    # ------------------------------------------------------------ groups
+    GROUP_PALETTE = ["#2e7d32", "#c62828", "#1565c0", "#f9a825", "#6a1b9a", "#00838f", "#ef6c00", "#4e342e"]
+
+    def set_group(self, rows: Iterable[int], name: str):
+        idx = list(rows)
+        if name and name not in self.group_colors:
+            self.group_colors[name] = self.GROUP_PALETTE[len(self.group_colors) % len(self.GROUP_PALETTE)]
+        def fn():
+            for i in idx:
+                self.rows[i].group = name
+        self._record(f"Group '{name}'" if name else "Ungroup", idx, fn)
+
+    def groups(self) -> list[str]:
+        seen = []
+        for r in self.rows:
+            if r.group and r.group not in seen:
+                seen.append(r.group)
+        return seen
+
+    def group_rows(self, name: str) -> list[int]:
+        return [i for i, r in enumerate(self.rows) if r.group == name]
+
+    def group_color(self, name: str) -> str:
+        return self.group_colors.get(name, "#888888")
+
+    def set_group_color(self, name: str, color: str):
+        self.group_colors[name] = color
+        self._emit("data")
 
     # ------------------------------------------------------------ rows
     def add_row(self, row: SequenceRow, at: int | None = None):

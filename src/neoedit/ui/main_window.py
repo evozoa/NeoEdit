@@ -203,6 +203,9 @@ class MainWindow(QMainWindow):
         self.a_up = A("Move sequence(s) &up", lambda: self._move(-1), "Ctrl+Up")
         self.a_down = A("Move sequence(s) &down", lambda: self._move(1), "Ctrl+Down")
         self.a_settype = A("Set sequence type…", self.set_type)
+        self.a_grp_set = A("&Assign selected to group…", self.group_assign, "Ctrl+Shift+A")
+        self.a_grp_clear = A("&Remove selected from group", lambda: self.model.set_group(self.view.target_rows(), ""))
+        self.a_grp_color = A("Set group &color…", self.group_color)
         self.a_blast = A("BLAST selected sequence (NCBI web)", self.blast)
 
         # alignment ops
@@ -286,10 +289,13 @@ class MainWindow(QMainWindow):
         tm.addAction(self._act("Genetic code for overlay…", self._set_overlay_table))
 
         s = mb.addMenu("&Sequence")
+        self.group_menu = QMenu("&Groups", self)
+        self.group_menu.aboutToShow.connect(self._fill_group_menu)
         for a in (self.a_newseq, self.a_rename, self.a_delseq, self.a_dupseq, self.a_up, self.a_down, None,
                   self.a_revcomp, self.a_rev, self.a_comp, self.a_upper, self.a_lower, self.a_rmgaps, self.a_rna, self.a_dna, None,
                   self.a_translate, self.a_sixframe, None, self.a_settype, self.a_blast):
             s.addAction(a) if a else s.addSeparator()
+        s.addSeparator(); s.addMenu(self.group_menu)
 
         al = mb.addMenu("&Alignment")
         for a in (self.a_align, None, self.a_insgapcol, self.a_delgapcol, self.a_rm_gapcols, self.a_pad, None, self.a_extract):
@@ -344,6 +350,8 @@ class MainWindow(QMainWindow):
 
     def _context_menu(self, pos):
         m = QMenu(self)
+        m.addMenu(self.group_menu)
+        m.addSeparator()
         for a in (self.a_copy, self.a_paste, None, self.a_revcomp, self.a_translate, self.a_rmgaps, None,
                   self.a_insgapcol, self.a_delgapcol, None, self.a_orf, self.a_primer, self.a_blast, None, self.a_rename, self.a_delseq):
             m.addAction(a) if a else m.addSeparator()
@@ -824,6 +832,54 @@ class MainWindow(QMainWindow):
         if self.view.sel_rows:
             self.view.sel_rows = {r + d for r in rows}
         self.view.set_cursor(self.view.cur_row + d, self.view.cur_col)
+
+    def group_assign(self):
+        rows = self.view.target_rows()
+        if not rows:
+            return
+        existing = self.model.groups()
+        name, ok = QInputDialog.getItem(self, "Assign to group", "Group name (pick or type a new one):",
+                                        existing + ["include", "exclude"] if not existing else existing, 0, True)
+        if ok and name.strip():
+            self.model.set_group(rows, name.strip())
+
+    def group_color(self):
+        groups = self.model.groups()
+        if not groups:
+            return
+        name, ok = QInputDialog.getItem(self, "Group color", "Group:", groups, 0, False)
+        if not ok:
+            return
+        from PySide6.QtWidgets import QColorDialog
+        from PySide6.QtGui import QColor
+        c = QColorDialog.getColor(QColor(self.model.group_color(name)), self, f"Color for '{name}'")
+        if c.isValid():
+            self.model.set_group_color(name, c.name())
+
+    def _fill_group_menu(self):
+        m = self.group_menu
+        m.clear()
+        m.addAction(self.a_grp_set)
+        m.addAction(self.a_grp_clear)
+        m.addAction(self.a_grp_color)
+        groups = self.model.groups()
+        if groups:
+            m.addSeparator()
+            for g in groups:
+                n = len(self.model.group_rows(g))
+                sub = m.addMenu(f"{g}  ({n})")
+                sub.addAction(self._act("Select rows", lambda _, gg=g: self._group_select(gg)))
+                sub.addAction(self._act("Assign selected rows here", lambda _, gg=g: self.model.set_group(self.view.target_rows(), gg)))
+                sub.addAction(self._act("Dissolve group", lambda _, gg=g: self.model.set_group(self.model.group_rows(gg), "")))
+
+    def _group_select(self, name):
+        rows = self.model.group_rows(name)
+        if rows:
+            self.view.sel_rows = set(rows)
+            self.view.anchor = None
+            self.view.cur_row = rows[0]
+            self.view.selectionChanged.emit()
+            self.view.viewport().update()
 
     def set_type(self):
         s, ok = QInputDialog.getItem(self, "Sequence type", "Type:", ["auto", "dna", "rna", "protein"], 0, False)

@@ -79,3 +79,22 @@ def test_bioedit_color_tables():
     assert C.SCHEMES_AA["BioEdit"]["D"] == "#ff0000" and C.SCHEMES_AA["BioEdit"]["R"] == "#0000ff"
     assert list(C.SCHEMES_NT)[0] == "BioEdit" and list(C.SCHEMES_AA)[0] == "BioEdit"
     assert C._bgr_to_hex(16711680) == "#0000ff"
+
+
+def test_groups():
+    m = mk()
+    m.add_row(SequenceRow("c", "ACGT"))
+    m.set_group([1, 2], "include")
+    assert m.groups() == ["include"] and m.group_rows("include") == [1, 2]
+    assert m.rows[0].group == ""
+    c1 = m.group_color("include")
+    m.set_group([2], "exclude")
+    assert m.group_rows("include") == [1] and m.group_rows("exclude") == [2]
+    assert m.group_color("exclude") != c1
+    m.undo()
+    assert m.group_rows("include") == [1, 2]
+    m.set_group([1, 2], "")
+    assert m.groups() == []
+    r = m.rows[1].copy()
+    m.rows[1].group = "x"
+    assert r.group == ""  # copy is independent

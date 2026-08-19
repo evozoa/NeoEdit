@@ -458,9 +458,14 @@ class AlignmentView(QAbstractScrollArea):
             row_selected = r in self.sel_rows or (sel and sel[0] <= r <= sel[1] and self.sel_rows)
             p.fillRect(0, y, grid_left - 1, self.row_h,
                        pal.color(QPalette.Highlight) if r in self.sel_rows else pal.color(QPalette.Window))
+            name_x = 4
+            if row.group:
+                gcol = QColor(m.group_color(row.group))
+                p.fillRect(0, y, 5, self.row_h, gcol)
+                name_x = 8
             p.setPen(pal.color(QPalette.HighlightedText) if r in self.sel_rows else fg)
-            name = self._fm.elidedText(row.name, Qt.ElideRight, grid_left - 8)
-            p.drawText(4, y + self._ty, name)
+            name = self._fm.elidedText(row.name, Qt.ElideRight, grid_left - name_x - 4)
+            p.drawText(name_x, y + self._ty, name)
             # residues
             seq = row.seq
             for c in range(c0, c1):
@@ -680,6 +685,12 @@ class AlignmentView(QAbstractScrollArea):
             self.cursorChanged.emit(row, col)
             self.selectionChanged.emit()
             self.viewport().update()
+            return
+        if 0 <= row < self.model.nrows and pos.x() < self.name_w:
+            g = self.model.rows[row].group
+            d = self.model.rows[row].description
+            tip = "\n".join(x for x in (self.model.rows[row].name, f"group: {g}" if g else "", d) if x)
+            self.setToolTip(tip)
             return
         # hover: feature tooltip
         if row >= 0 and row < self.model.nrows and pos.x() >= self.name_w:
