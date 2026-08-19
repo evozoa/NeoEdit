@@ -1,0 +1,551 @@
+"""Genome-context panel: chromosome overview (tier 1) + region/gene-model view (tier 2).
+
+Sits above the alignment grid (tier 3). Red boxes: tier-1 box = tier-2 window;
+tier-2 box = columns currently visible in the grid.
+"""
+from __future__ import annotations
+
+import math
+from typing import Optional
+
+from PySide6.QtCore import Qt, QRect, QRectF, QPointF, Signal, QSize
+from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics, QPalette, QBrush, QPolygonF, QCursor
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLineEdit, QToolButton, QLabel,
+                               QToolTip, QCheckBox, QSizePolicy)
+
+from ..genome.annotations import Annotation, Gene, Transcript, SyntenyBlock, pack_lanes
+from ..model import colors as C
+
+NT_COL = {"A": "#008000", "C": "#0000ff", "G": "#000000", "T": "#ff0000"}
+RED = QColor("#e00000")
+
+
+def fmt_bp(n: int) -> str:
+    return f"{n:,}"
+
+
+def nice_step(span: int, target_ticks: int = 8) -> int:
+    raw = span / max(1, target_ticks)
+    mag = 10 ** int(math.floor(math.log10(max(1, raw))))
+    for m in (1, 2, 5, 10):
+        if m * mag >= raw:
+            return int(m * mag)
+    return int(10 * mag)
+
+
+def _hash_color(name: str) -> QColor:
+    h = 0
+    for ch in name:
+        h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+    return QColor.fromHsv(h % 360, 140, 200)
+
+
+# ======================================================================== tier 1
+class ChromosomeOverview(QWidget):
+    """Whole-contig bar with a draggable red box = the tier-2 window."""
+    windowChanged = Signal(int, int)     # new tier-2 window (start, end)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.length = 1
+        self.win = (0, 1)
+        self.focus = None                 # tier-3 visible region (drawn as a thin marker)
+        self.synteny: list[SyntenyBlock] = []
+        self.gene_density: list[int] = []
+        self.setMinimumHeight(34)
+        self.setMaximumHeight(34)
+        self.setMouseTracking(True)
+        self._drag = None
+
+    def set_length(self, n: int):
+        self.length = max(1, n); self.update()
+
+    def set_window(self, s: int, e: int):
+        self.win = (max(0, s), min(self.length, e)); self.update()
+
+    def set_focus(self, s, e):
+        self.focus = (s, e); self.update()
+
+    def _bar(self) -> QRect:
+        return QRect(8, 10, self.width() - 16, 14)
+
+    def _x(self, pos: int) -> float:
+        b = self._bar()
+        return b.left() + b.width() * pos / self.length
+
+    def _pos(self, x: float) -> int:
+        b = self._bar()
+        return int(max(0, min(self.length, (x - b.left()) / max(1, b.width()) * self.length)))
+
+    def paintEvent(self, e):
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
+        pal = self.palette()
+        p.fillRect(self.rect(), pal.color(QPalette.Window))
+        b = self._bar()
+        p.setPen(QPen(QColor("#777"), 1)); p.setBrush(QColor("#e8e8e8")); p.drawRoundedRect(b, 4, 4)
+        # synteny coloring on the bar
+        for blk in self.synteny:
+            x0, x1 = self._x(blk.qstart), self._x(blk.qend)
+            if x1 - x0 < 0.5:
+                continue
+            col = _hash_color(blk.tname); col.setAlpha(200)
+            p.fillRect(QRectF(x0, b.top() + 1, max(1.0, x1 - x0), b.height() - 2), col)
+        # gene density (light ticks)
+        if self.gene_density:
+            mx = max(self.gene_density) or 1
+            n = len(self.gene_density)
+            for i, d in enumerate(self.gene_density):
+                if d:
+                    x = b.left() + b.width() * i / n
+                    h = (b.height() - 4) * d / mx
+                    p.fillRect(QRectF(x, b.bottom() - 1 - h, max(1.0, b.width() / n), h), QColor(0, 0, 0, 60))
+        # ticks
+        p.setPen(QColor("#555")); f = self.font(); f.setPointSize(7); p.setFont(f)
+        step = nice_step(self.length, 10)
+        for t in range(0, self.length + 1, step):
+            x = self._x(t)
+            p.drawLine(QPointF(x, b.bottom() + 1), QPointF(x, b.bottom() + 4))
+            lab = f"{t / 1e6:g} Mb" if self.length >= 2_000_000 else (f"{t / 1e3:g} kb" if self.length >= 2000 else str(t))
+            p.drawText(QPointF(x - 12, b.bottom() + 12), lab)
+        # focus marker (tier 3) and window box (tier 2)
+        if self.focus:
+            x0, x1 = self._x(self.focus[0]), self._x(self.focus[1])
+            p.fillRect(QRectF(x0, b.top() - 4, max(2.0, x1 - x0), 3), QColor("#1f5fbf"))
+        x0, x1 = self._x(self.win[0]), self._x(self.win[1])
+        p.setPen(QPen(RED, 2)); p.setBrush(Qt.NoBrush)
+        p.drawRect(QRectF(x0, b.top() - 2, max(4.0, x1 - x0), b.height() + 4))
+        p.end()
+
+    def mousePressEvent(self, e):
+        x = e.position().x()
+        x0, x1 = self._x(self.win[0]), self._x(self.win[1])
+        if x0 - 4 <= x <= x1 + 4:
+            self._drag = ("move", x, self.win)
+        else:
+            # jump: center window at click
+            w = self.win[1] - self.win[0]
+            c = self._pos(x)
+            s = max(0, min(self.length - w, c - w // 2))
+            self.windowChanged.emit(s, s + w)
+
+    def mouseMoveEvent(self, e):
+        if self._drag:
+            _, x_start, (s0, e0) = self._drag
+            d = self._pos(e.position().x()) - self._pos(x_start)
+            w = e0 - s0
+            s = max(0, min(self.length - w, s0 + d))
+            self.windowChanged.emit(s, s + w)
+        else:
+            self.setCursor(Qt.SizeHorCursor if self._x(self.win[0]) - 4 <= e.position().x() <= self._x(self.win[1]) + 4 else Qt.PointingHandCursor)
+
+    def mouseReleaseEvent(self, e):
+        self._drag = None
+
+    def wheelEvent(self, e):
+        s, en = self.win
+        c = self._pos(e.position().x())
+        factor = 0.8 if e.angleDelta().y() > 0 else 1.25
+        w = max(100, min(self.length, int((en - s) * factor)))
+        ns = int(c - (c - s) * w / max(1, en - s))
+        ns = max(0, min(self.length - w, ns))
+        self.windowChanged.emit(ns, ns + w)
+
+
+# ======================================================================== tier 2
+class RegionView(QWidget):
+    """Gene models + synteny for the current window; red box = grid's visible columns."""
+    windowChanged = Signal(int, int)
+    focusRequested = Signal(int, int)       # user clicked: scroll grid to show (start,end)
+    geneActivated = Signal(object)           # double-click gene
+    hoverInfo = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.length = 1
+        self.win = (0, 1)
+        self.focus = None
+        self.ann: Optional[Annotation] = None
+        self.seqid = ""
+        self.synteny: list[SyntenyBlock] = []
+        self.fetch_seq = None               # callable(start,end)->str for base-level drawing
+        self.expanded = False               # show all transcripts
+        self.setMinimumHeight(150)
+        self.setMouseTracking(True)
+        self._drag = None
+        self._gene_hits: list[tuple[QRectF, Gene, Transcript]] = []
+        self._syn_hits: list[tuple[QRectF, SyntenyBlock]] = []
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    # --------------------------------------------------------------- state
+    def set_window(self, s, e):
+        s = max(0, s); e = min(self.length, max(s + 50, e))
+        self.win = (s, e); self.update()
+
+    def set_focus(self, s, e):
+        self.focus = (s, e); self.update()
+
+    def _x(self, pos) -> float:
+        s, e = self.win
+        return 40 + (self.width() - 48) * (pos - s) / max(1, e - s)
+
+    def _pos(self, x) -> int:
+        s, e = self.win
+        return int(s + (x - 40) / max(1, self.width() - 48) * (e - s))
+
+    def bp_per_px(self) -> float:
+        return (self.win[1] - self.win[0]) / max(1, self.width() - 48)
+
+    # --------------------------------------------------------------- paint
+    def paintEvent(self, ev):
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing, False)
+        pal = self.palette()
+        p.fillRect(self.rect(), pal.color(QPalette.Base))
+        W, H = self.width(), self.height()
+        s, e = self.win
+        left, right = 40, W - 8
+        self._gene_hits.clear(); self._syn_hits.clear()
+        f = self.font(); f.setPointSize(8); p.setFont(f); fm = QFontMetrics(f)
+
+        # ruler
+        y = 14
+        p.setPen(QColor("#444"))
+        p.drawLine(left, y, right, y)
+        step = nice_step(e - s, 8)
+        t0 = max(step, ((s + 1) // step) * step)
+        for t in range(t0, e + 2, step):           # t = 1-based coordinate at a round number
+            x = self._x(t - 1)
+            if x < left - 1 or x > right + 1:
+                continue
+            p.drawLine(QPointF(x, y), QPointF(x, y - 5))
+            lab = fmt_bp(t)
+            p.drawText(QPointF(min(max(left, x - fm.horizontalAdvance(lab) / 2), right - fm.horizontalAdvance(lab)), 9), lab)
+        y += 4
+
+        # sequence track when zoomed in enough
+        bpp = self.bp_per_px()
+        if self.fetch_seq and bpp <= 1 / 6:
+            seq = self.fetch_seq(s, e)
+            px = 1 / bpp
+            mono = QFont("Courier New", max(6, min(12, int(px * 0.9)))); mono.setBold(True)
+            p.setFont(mono); fmm = QFontMetrics(mono)
+            for i, ch in enumerate(seq):
+                x = self._x(s + i)
+                p.setPen(QColor(NT_COL.get(ch.upper(), "#888")))
+                p.drawText(QPointF(x + (px - fmm.horizontalAdvance(ch)) / 2, y + 12), ch)
+            p.setFont(f)
+            y += 18
+        elif self.fetch_seq and bpp <= 1:
+            # GC-ish density strip? keep simple: thin line indicating sequence present
+            p.fillRect(QRectF(left, y + 3, right - left, 3), QColor("#ddd")); y += 10
+
+        # gene lanes
+        genes = self.ann.overlapping(self.seqid, s, e) if (self.ann and self.seqid) else []
+        items = []
+        for g in genes:
+            txs = g.transcripts if self.expanded else [max(g.transcripts, key=lambda t: (len(t.cds), t.end - t.start))] if g.transcripts else []
+            for t in txs:
+                label_w = fm.horizontalAdvance(g.name if not self.expanded else f"{g.name} {t.name}") + 6
+                x0, x1 = self._x(t.start), self._x(t.end)
+                items.append((int(min(x0, x1)), int(max(x1, x0 + label_w)), (g, t)))
+        lanes = pack_lanes(items, gap=4)
+        lane_h = 26 if not self.expanded else 22
+        max_lanes = max(1, (H - y - 40) // lane_h)
+        y0 = y + 4
+        for li, lane in enumerate(lanes[:max_lanes]):
+            yy = y0 + li * lane_h
+            for _, _, (g, t) in lane:
+                self._draw_transcript(p, fm, g, t, yy, lane_h)
+        if len(lanes) > max_lanes:
+            p.setPen(QColor("#a00")); p.drawText(QPointF(left, y0 + max_lanes * lane_h + 10), f"… {len(lanes) - max_lanes} more rows (zoom in or enlarge panel)")
+        y = y0 + min(len(lanes), max_lanes) * lane_h + 6
+        if not genes and self.ann is None:
+            p.setPen(QColor("#888")); p.drawText(QPointF(left, y0 + 14), "No annotation loaded (Genome ▸ Load annotation…)")
+
+        # synteny track (bottom)
+        if self.synteny:
+            ty = H - 22
+            p.setPen(QColor("#666")); p.drawText(QPointF(2, ty + 10), "syn")
+            for blk in self.synteny:
+                if blk.qend <= s or blk.qstart >= e:
+                    continue
+                x0, x1 = max(left, self._x(blk.qstart)), min(right, self._x(blk.qend))
+                if x1 - x0 < 1:
+                    x1 = x0 + 1
+                col = _hash_color(blk.tname)
+                r = QRectF(x0, ty, x1 - x0, 12)
+                p.fillRect(r, col if blk.strand > 0 else col.darker(140))
+                self._syn_hits.append((r, blk))
+                lab = f"{blk.tname}:{blk.tstart // 1000}k{'+' if blk.strand > 0 else '-'}"
+                if x1 - x0 > fm.horizontalAdvance(lab) + 6:
+                    p.setPen(QColor("#000")); p.drawText(QPointF(x0 + 3, ty + 10), lab)
+
+        # focus box (tier 3 region)
+        if self.focus:
+            fx0, fx1 = self._x(self.focus[0]), self._x(self.focus[1])
+            p.setPen(QPen(RED, 2)); p.setBrush(Qt.NoBrush)
+            p.drawRect(QRectF(max(left - 1, fx0), 2, max(3.0, min(right + 1, fx1) - max(left - 1, fx0)), H - 4))
+        # side labels
+        p.setPen(QColor("#666")); p.drawText(QPointF(2, 9), "bp")
+        p.end()
+
+    def _draw_transcript(self, p: QPainter, fm, g: Gene, t: Transcript, y: int, lane_h: int):
+        left, right = 40, self.width() - 8
+        x0, x1 = max(left, self._x(t.start)), min(right, self._x(t.end))
+        mid = y + 8
+        base = QColor("#1f5fbf") if g.strand > 0 else QColor("#c0392b")
+        if g.biotype and "protein" not in g.biotype and g.biotype not in ("gene", "mRNA", "CDS", "bed"):
+            base = QColor("#7d3c98") if g.strand > 0 else QColor("#a04000")
+        p.setPen(QPen(base, 1)); p.drawLine(QPointF(x0, mid), QPointF(x1, mid))
+        # strand chevrons along intron line
+        if x1 - x0 > 30:
+            step = 18
+            for cx in range(int(x0) + 9, int(x1) - 6, step):
+                if g.strand > 0:
+                    p.drawLine(QPointF(cx - 3, mid - 3), QPointF(cx, mid)); p.drawLine(QPointF(cx - 3, mid + 3), QPointF(cx, mid))
+                else:
+                    p.drawLine(QPointF(cx + 3, mid - 3), QPointF(cx, mid)); p.drawLine(QPointF(cx + 3, mid + 3), QPointF(cx, mid))
+        p.setPen(Qt.NoPen)
+        # UTR (thin) and exons/CDS (thick)
+        cds = t.cds
+        for es, ee in t.exons:
+            ex0, ex1 = max(left, self._x(es)), min(right, self._x(ee))
+            if ex1 < left or ex0 > right:
+                continue
+            w = max(1.0, ex1 - ex0)
+            if cds:
+                # draw exon as UTR-height first, then CDS part full height
+                p.setBrush(base.lighter(150)); p.drawRect(QRectF(ex0, mid - 3, w, 6))
+            else:
+                p.setBrush(base); p.drawRect(QRectF(ex0, mid - 5, w, 10))
+        for cs, ce in cds:
+            cx0, cx1 = max(left, self._x(cs)), min(right, self._x(ce))
+            if cx1 < left or cx0 > right:
+                continue
+            p.setBrush(base); p.drawRect(QRectF(cx0, mid - 6, max(1.0, cx1 - cx0), 12))
+        # label
+        label = g.name if not self.expanded else f"{g.name} {t.name}"
+        p.setPen(QColor("#222"))
+        lx = max(left, self._x(t.start))
+        p.drawText(QPointF(lx, mid + 17 if lane_h > 22 else mid + 15), label)
+        hit = QRectF(x0, mid - 7, max(4.0, x1 - x0), 14)
+        self._gene_hits.append((hit, g, t))
+
+    # --------------------------------------------------------------- mouse
+    def _hit(self, pos):
+        for r, g, t in self._gene_hits:
+            if r.contains(pos):
+                return g, t
+        return None
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag = (e.position().x(), self.win, False)
+
+    def mouseMoveEvent(self, e):
+        pos = e.position()
+        if self._drag and e.buttons() & Qt.LeftButton:
+            x0, (s0, e0), moved = self._drag
+            dx = pos.x() - x0
+            if abs(dx) > 2 or moved:
+                d = int(-dx * self.bp_per_px())
+                w = e0 - s0
+                s = max(0, min(self.length - w, s0 + d))
+                self._drag = (x0, (s0, e0), True)
+                self.windowChanged.emit(s, s + w)
+            return
+        h = self._hit(pos)
+        if h:
+            g, t = h
+            self.setCursor(Qt.PointingHandCursor)
+            info = (f"<b>{g.name}</b> ({g.id})  {g.seqid}:{fmt_bp(g.start + 1)}-{fmt_bp(g.end)} "
+                    f"({'+' if g.strand > 0 else '-'})  {g.biotype}<br>{t.name}: {len(t.exons)} exons"
+                    + (f", CDS {sum(b - a for a, b in t.cds):,} bp" if t.cds else "")
+                    + "".join(f"<br>{k}: {v}" for k, v in g.attrs.items() if k in ("description", "product")))
+            QToolTip.showText(QCursor.pos(), info, self)
+            self.hoverInfo.emit(f"{g.name}  {g.seqid}:{fmt_bp(g.start + 1)}-{fmt_bp(g.end)} ({'+' if g.strand > 0 else '-'})")
+            return
+        for r, blk in self._syn_hits:
+            if r.contains(pos):
+                QToolTip.showText(QCursor.pos(), f"{blk.qname}:{fmt_bp(blk.qstart + 1)}-{fmt_bp(blk.qend)} {'+' if blk.strand > 0 else '-'} → "
+                                  f"{blk.tname}:{fmt_bp(blk.tstart + 1)}-{fmt_bp(blk.tend)}  id {blk.identity:.1%}  mapq {blk.mapq}", self)
+                return
+        self.setCursor(Qt.OpenHandCursor)
+        self.hoverInfo.emit(f"{self.seqid}:{fmt_bp(self._pos(pos.x()) + 1)}")
+
+    def mouseReleaseEvent(self, e):
+        if self._drag and not self._drag[2] and e.button() == Qt.LeftButton:
+            # click (no drag): scroll the grid here
+            h = self._hit(e.position())
+            if h:
+                g, t = h
+                self.focusRequested.emit(g.start, g.end)
+            else:
+                c = self._pos(e.position().x())
+                self.focusRequested.emit(c, c)
+        self._drag = None
+
+    def mouseDoubleClickEvent(self, e):
+        h = self._hit(e.position())
+        if h:
+            self.geneActivated.emit(h[0])
+
+    def wheelEvent(self, e):
+        s, en = self.win
+        c = self._pos(e.position().x())
+        factor = 0.8 if e.angleDelta().y() > 0 else 1.25
+        if e.modifiers() & Qt.ShiftModifier:
+            d = int((en - s) * (0.1 if e.angleDelta().y() < 0 else -0.1))
+            w = en - s
+            ns = max(0, min(self.length - w, s + d))
+            self.windowChanged.emit(ns, ns + w); return
+        w = max(50, min(self.length, int((en - s) * factor)))
+        ns = int(c - (c - s) * w / max(1, en - s))
+        ns = max(0, min(self.length - w, ns))
+        self.windowChanged.emit(ns, ns + w)
+
+
+# ======================================================================== panel
+class GenomePanel(QWidget):
+    contigSelected = Signal(str)            # user picked a contig
+    focusRequested = Signal(int, int)       # scroll grid to region
+    geneActivated = Signal(object)
+    openRegionRequested = Signal(int, int)  # "open region in new editor window"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.length = 1
+        self.seqid = ""
+        self.ann: Optional[Annotation] = None
+        lay = QVBoxLayout(self); lay.setContentsMargins(2, 2, 2, 0); lay.setSpacing(2)
+        bar = QHBoxLayout(); bar.setSpacing(4)
+        self.contig_combo = QComboBox(); self.contig_combo.setMinimumWidth(160)
+        self.contig_combo.currentIndexChanged.connect(self._contig_changed)
+        self.region_edit = QLineEdit(); self.region_edit.setPlaceholderText("region, e.g. 1,200,000-1,250,000  or  gene name")
+        self.region_edit.returnPressed.connect(self._goto_text)
+        self.zoom_in = QToolButton(); self.zoom_in.setText("+"); self.zoom_in.setToolTip("Zoom in")
+        self.zoom_out = QToolButton(); self.zoom_out.setText("−"); self.zoom_out.setToolTip("Zoom out")
+        self.zoom_in.clicked.connect(lambda: self._zoom(0.5)); self.zoom_out.clicked.connect(lambda: self._zoom(2.0))
+        self.expand_cb = QCheckBox("All transcripts")
+        self.expand_cb.toggled.connect(self._toggle_expanded)
+        self.open_btn = QToolButton(); self.open_btn.setText("Open region in editor"); self.open_btn.setToolTip("Open the red-box region as a new alignment window with gene features")
+        self.open_btn.clicked.connect(lambda: self.openRegionRequested.emit(*self.region.win))
+        self.info = QLabel(""); self.info.setMinimumWidth(200)
+        bar.addWidget(QLabel("Contig:")); bar.addWidget(self.contig_combo); bar.addWidget(self.region_edit, 1)
+        bar.addWidget(self.zoom_in); bar.addWidget(self.zoom_out); bar.addWidget(self.expand_cb); bar.addWidget(self.open_btn)
+        bar.addWidget(self.info)
+        lay.addLayout(bar)
+        self.overview = ChromosomeOverview()
+        self.region = RegionView()
+        lay.addWidget(self.overview)
+        lay.addWidget(self.region, 1)
+        self.overview.windowChanged.connect(self.set_window)
+        self.region.windowChanged.connect(self.set_window)
+        self.region.focusRequested.connect(self.focusRequested)
+        self.region.geneActivated.connect(self.geneActivated)
+        self.region.hoverInfo.connect(self.info.setText)
+
+    # ------------------------------------------------------------ API
+    def set_contigs(self, contigs: list[tuple[str, int]], current: str | None = None):
+        self.contig_combo.blockSignals(True)
+        self.contig_combo.clear()
+        for n, L in contigs:
+            self.contig_combo.addItem(f"{n}  ({L / 1e6:.2f} Mb)" if L >= 1e6 else f"{n}  ({L:,} bp)", n)
+        if current:
+            i = self.contig_combo.findData(current)
+            if i >= 0:
+                self.contig_combo.setCurrentIndex(i)
+        self.contig_combo.blockSignals(False)
+
+    def set_contig(self, seqid: str, length: int, fetch_seq=None):
+        self.seqid = seqid; self.length = max(1, length)
+        self.overview.set_length(self.length)
+        self.region.length = self.length; self.region.seqid = seqid; self.region.fetch_seq = fetch_seq
+        self.overview.synteny = []; self.region.synteny = []
+        self._update_density()
+        self.set_window(0, min(self.length, 200_000))
+
+    def set_annotation(self, ann: Optional[Annotation]):
+        self.ann = ann; self.region.ann = ann
+        self._update_density()
+        self.region.update()
+
+    def set_synteny(self, blocks: list[SyntenyBlock]):
+        blocks = [b for b in blocks if b.qname == self.seqid]
+        self.overview.synteny = blocks; self.region.synteny = blocks
+        self.overview.update(); self.region.update()
+
+    def set_focus(self, s: int, e: int):
+        """Grid is showing columns [s,e) – draw red box; keep window containing it if it was."""
+        self.overview.set_focus(s, e); self.region.set_focus(s, e)
+
+    def set_window(self, s: int, e: int):
+        s = max(0, s); e = min(self.length, max(s + 50, e))
+        self.overview.set_window(s, e); self.region.set_window(s, e)
+        self.region_edit.setText(f"{fmt_bp(s + 1)}-{fmt_bp(e)}")
+
+    def window(self):
+        return self.region.win
+
+    def ensure_window_contains(self, s: int, e: int):
+        ws, we = self.region.win
+        if s >= ws and e <= we:
+            return
+        w = max(we - ws, e - s + 50)
+        ns = max(0, min(self.length - w, (s + e) // 2 - w // 2))
+        self.set_window(ns, ns + w)
+
+    # ------------------------------------------------------------ internals
+    def _update_density(self):
+        n = 200
+        dens = [0] * n
+        if self.ann and self.seqid:
+            for g in self.ann.genes_by_seq.get(self.seqid, []):
+                i = min(n - 1, int(g.start / self.length * n)); dens[i] += 1
+        self.overview.gene_density = dens if any(dens) else []
+        self.overview.update()
+
+    def _contig_changed(self, i):
+        sid = self.contig_combo.itemData(i)
+        if sid:
+            self.contigSelected.emit(sid)
+
+    def _zoom(self, factor):
+        s, e = self.region.win
+        c = (s + e) // 2
+        w = max(50, min(self.length, int((e - s) * factor)))
+        ns = max(0, min(self.length - w, c - w // 2))
+        self.set_window(ns, ns + w)
+
+    def _toggle_expanded(self, on):
+        self.region.expanded = on; self.region.update()
+
+    def _goto_text(self):
+        txt = self.region_edit.text().strip().replace(",", "")
+        import re
+        m = re.match(r"^(?:[^:]+:)?\s*(\d+)\s*[-–:]\s*(\d+)$", txt)
+        if m:
+            s, e = int(m.group(1)) - 1, int(m.group(2))
+            if e > s:
+                self.set_window(s, e); self.focusRequested.emit(s, e)
+            return
+        if txt.isdigit():
+            c = int(txt) - 1
+            w = self.region.win[1] - self.region.win[0]
+            self.set_window(c - w // 2, c - w // 2 + w); self.focusRequested.emit(c, c)
+            return
+        if self.ann:
+            hits = [g for g in self.ann.find(txt) if g.seqid == self.seqid] or self.ann.find(txt)
+            if hits:
+                g = hits[0]
+                if g.seqid != self.seqid:
+                    self.info.setText(f"{g.name} is on {g.seqid}")
+                    i = self.contig_combo.findData(g.seqid)
+                    if i >= 0:
+                        self.contig_combo.setCurrentIndex(i)
+                    return
+                pad = max(2000, len(g) // 2)
+                self.set_window(g.start - pad, g.end + pad)
+                self.focusRequested.emit(g.start, g.end)
+                self.info.setText(f"{g.name}: {fmt_bp(g.start + 1)}-{fmt_bp(g.end)}")
+                return
+        self.info.setText("Not found")

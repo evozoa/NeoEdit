@@ -90,6 +90,7 @@ class AlignmentView(QAbstractScrollArea):
         self.shade_threshold = 0.5
         self._consensus_cache = None
         self._drag_block = None       # (rows, start, end, last_col, kind)  kind: "crunch" | "downstream"
+        self.feature_provider = None  # optional callable(row, c0, c1) -> list[Feature] (e.g. genome annotation)
         self._dragging_sel = False
         self._press_pos = None
 
@@ -483,8 +484,15 @@ class AlignmentView(QAbstractScrollArea):
                         self._text(p, x + self._tx, y + self.cell_h + self._ty, a)
                 p.setPen(fg)
         # --- features overlay
-        if self.show_features and m.features:
-            for f in m.features:
+        feats = list(m.features) if m.features else []
+        if self.show_features and self.feature_provider is not None:
+            for r in range(r0, r1):
+                try:
+                    feats.extend(self.feature_provider(r, c0, c1))
+                except Exception:
+                    pass
+        if self.show_features and feats:
+            for f in feats:
                 if not (r0 <= f.row < r1):
                     continue
                 if f.end <= c0 or f.start >= c1:
@@ -675,7 +683,7 @@ class AlignmentView(QAbstractScrollArea):
             return
         # hover: feature tooltip
         if row >= 0 and row < self.model.nrows and pos.x() >= self.name_w:
-            for f in self.model.features:
+            for f in self._features_at(row, col):
                 if f.row == row and f.start <= col < f.end:
                     self.setToolTip(f"{f.type}: {f.label}\n{f.start + 1}-{f.end} ({'+' if f.strand > 0 else '-'})")
                     return
@@ -706,11 +714,20 @@ class AlignmentView(QAbstractScrollArea):
                 self.model.rename(row, name)
             return
         # double-click a feature selects it
-        for f in self.model.features:
+        for f in self._features_at(row, col):
             if f.row == row and f.start <= col < f.end:
                 self.select_region(row, row, f.start, f.end - 1)
                 self.featureActivated.emit(f)
                 return
+
+    def _features_at(self, row, col):
+        out = [f for f in self.model.features if f.row == row and f.start <= col < f.end]
+        if self.feature_provider is not None:
+            try:
+                out += [f for f in self.feature_provider(row, col, col + 1) if f.start <= col < f.end]
+            except Exception:
+                pass
+        return out
 
     def wheelEvent(self, e: QWheelEvent):
         if e.modifiers() & Qt.ControlModifier:

@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QSettings, QSize
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QIcon
 from PySide6.QtWidgets import (QMainWindow, QFileDialog, QMessageBox, QLabel, QToolBar, QDockWidget,
                                QApplication, QInputDialog, QMenu, QTabWidget, QWidget, QVBoxLayout, QComboBox,
-                               QSpinBox, QProgressDialog)
+                               QSpinBox, QProgressDialog, QSplitter)
 
 from ..model import AlignmentModel, SequenceRow, Feature
 from ..model import io as mio
@@ -17,6 +17,9 @@ from ..analysis import translate as T
 from ..analysis import external as EXT
 from .alignment_view import AlignmentView
 from .feature_track import FeaturePanel
+from .genome_panel import GenomePanel
+from ..genome.fasta_index import IndexedFasta
+from ..genome import annotations as GA
 from .icons import icon, app_icon as icon_app
 from .dialogs.translate_dialog import TranslateDialog
 from .dialogs.orf_dialog import ORFFinderDialog
@@ -41,7 +44,24 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("neoedit", os.environ.get("NEOEDIT_SETTINGS", "neoedit"))
         self.model = AlignmentModel()
         self.view = AlignmentView(self.model)
-        self.setCentralWidget(self.view)
+        # genome context panel (tiers 1-2) above the grid (tier 3); hidden until a genome is opened
+        self.genome_panel = GenomePanel()
+        self.genome_panel.hide()
+        self.splitter = QSplitter(Qt.Vertical)
+        self.splitter.addWidget(self.genome_panel)
+        self.splitter.addWidget(self.view)
+        self.splitter.setStretchFactor(0, 0); self.splitter.setStretchFactor(1, 1)
+        self.setCentralWidget(self.splitter)
+        self.genome: IndexedFasta | None = None
+        self.genome_contig: str | None = None
+        self.annotation: GA.Annotation | None = None
+        self.synteny_blocks: list = []
+        self.genome_panel.contigSelected.connect(self._genome_load_contig)
+        self.genome_panel.focusRequested.connect(self._genome_focus)
+        self.genome_panel.geneActivated.connect(self._genome_open_gene)
+        self.genome_panel.openRegionRequested.connect(self._genome_open_region)
+        self.view.horizontalScrollBar().valueChanged.connect(self._grid_scrolled)
+        self.view.horizontalScrollBar().rangeChanged.connect(lambda *_: self._grid_scrolled())
         self.find_dlg = None
         self._children = []  # keep non-modal dialogs alive
 
@@ -200,6 +220,16 @@ class MainWindow(QMainWindow):
 
         self.a_about = A("&About", self.about)
 
+        # genome
+        self.a_g_open = A("Open &genome FASTA…", self.genome_open, "Ctrl+Shift+G",
+                          tip="Open a (large, indexed) genome FASTA and pick a contig/chromosome")
+        self.a_g_ann = A("Load &annotation (GFF3/GTF/BED/GenBank)…", self.genome_load_annotation)
+        self.a_g_syn = A("Load &synteny blocks (PAF)…", self.genome_load_synteny)
+        self.a_g_panel = A("Show genome &panel", self._toggle_genome_panel, "Ctrl+Shift+B", True)
+        self.a_g_goto = A("Go to &region / gene…", self.genome_goto, "Ctrl+J")
+        self.a_g_openreg = A("Open current region in &new editor window", lambda: self._genome_open_region(*self.genome_panel.window()))
+        self.a_g_clear = A("&Close genome (keep sequence)", self.genome_close)
+
         for name, act in (("open", self.a_open), ("save", self.a_save), ("undo", self.a_undo), ("redo", self.a_redo),
                           ("mode_slide", self.a_mode_slide), ("mode_edit", self.a_mode_edit), ("mode_grab", self.a_mode_grab),
                           ("mode_insert", self.a_mode_insert), ("mode_overwrite", self.a_mode_over), ("downstream", self.a_downstream), ("zoom_in", self.a_zoom_in), ("zoom_out", self.a_zoom_out),
@@ -261,6 +291,10 @@ class MainWindow(QMainWindow):
         an = mb.addMenu("A&nalysis")
         for a in (self.a_orf, self.a_primer, None, self.a_stats, self.a_ident, self.a_plot, self.a_cons_report):
             an.addAction(a) if a else an.addSeparator()
+
+        gm = mb.addMenu("&Genome")
+        for a in (self.a_g_open, self.a_g_ann, self.a_g_syn, None, self.a_g_panel, self.a_g_goto, self.a_g_openreg, None, self.a_g_clear):
+            gm.addAction(a) if a else gm.addSeparator()
 
         h = mb.addMenu("&Help")
         h.addAction(self._act("Keyboard shortcuts", self.shortcuts))
@@ -380,7 +414,11 @@ class MainWindow(QMainWindow):
         if m.nrows:
             r, c = v.cur_row, v.cur_col
             seq = m.rows[r].seq
-            ug = sum(1 for ch in seq[:c + 1] if ch not in "-.~") if c < len(seq) else 0
+            if c < len(seq):
+                upto = c + 1
+                ug = upto - seq.count("-", 0, upto) - seq.count(".", 0, upto) - seq.count("~", 0, upto)
+            else:
+                ug = 0
             ch = seq[c] if c < len(seq) else ""
             self.lbl_pos.setText(f"  {m.rows[r].name}  col {c + 1}  (residue {ug})  [{ch}]  ")
         else:
@@ -439,6 +477,18 @@ class MainWindow(QMainWindow):
             self.open_path(path)
 
     def open_path(self, path: str):
+        try:
+            if os.path.getsize(path) > 50_000_000 and path.lower().endswith((".fa", ".fasta", ".fna")):
+                r = QMessageBox.question(self, "Large FASTA", "This FASTA is large. Open it as a genome (indexed, one contig at a time)?",
+                                         QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+                if r == QMessageBox.Cancel:
+                    return
+                if r == QMessageBox.Yes:
+                    self.open_genome_path(path); return
+        except OSError:
+            pass
+        if self.genome:
+            self.genome_close()
         try:
             model = mio.load(path)
         except Exception as e:
@@ -915,6 +965,214 @@ class MainWindow(QMainWindow):
     def consensus_report(self):
         if self.model.nrows:
             TextDialog(self, "Consensus", f">consensus\n{self.view.consensus()}\n").exec()
+
+    # ------------------------------------------------------------ genome
+    def _toggle_genome_panel(self, on):
+        self.genome_panel.setVisible(on)
+        if on:
+            self.splitter.setSizes([260, max(200, self.height() - 260)])
+
+    def genome_open(self):
+        if not self._maybe_save():
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Open genome FASTA", self.settings.value("last_genome_dir", self.settings.value("last_dir", "")),
+                                              "FASTA (*.fa *.fasta *.fna *.fa.gz);;All files (*)")
+        if not path:
+            return
+        self.open_genome_path(path)
+
+    def open_genome_path(self, path: str, contig: str | None = None):
+        if path.endswith(".gz"):
+            QMessageBox.information(self, "Genome", "Please decompress the FASTA first (random access needs an uncompressed file or bgzip+index)."); return
+        try:
+            prog = QProgressDialog("Indexing genome… (first time only)", None, 0, 0, self)
+            prog.setWindowModality(Qt.WindowModal); prog.show(); QApplication.processEvents()
+            genome = IndexedFasta(path)
+            prog.close()
+        except Exception as e:
+            QMessageBox.critical(self, "Genome", f"Could not open {path}:\n{e}"); return
+        if self.genome:
+            self.genome.close()
+        self.genome = genome
+        self.annotation = None; self.synteny_blocks = []
+        self.settings.setValue("last_genome_dir", os.path.dirname(path))
+        contigs = genome.contigs()
+        self.genome_panel.set_contigs(contigs)
+        self.genome_panel.set_annotation(None)
+        self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
+        # pick the contig: largest by default, let the user choose via combo; load the first (largest) now
+        if contigs:
+            first = contig if contig in genome.records else max(contigs, key=lambda c: c[1])[0]
+            self.genome_panel.set_contigs(contigs, current=first)
+            self._genome_load_contig(first)
+        self._add_recent(path)
+
+    def load_annotation_path(self, path: str, only: str | None = None):
+        ann = GA.load_annotation(path, only)
+        self.annotation = ann
+        self.genome_panel.set_annotation(ann)
+        self.view.viewport().update()
+        return ann
+
+    def _genome_load_contig(self, seqid: str):
+        if not self.genome or seqid not in self.genome.records:
+            return
+        if self.model.dirty and not self._maybe_save():
+            return
+        L = self.genome.length(seqid)
+        prog = QProgressDialog(f"Loading {seqid} ({L / 1e6:.1f} Mb)…", None, 0, 0, self)
+        prog.setWindowModality(Qt.WindowModal); prog.show(); QApplication.processEvents()
+        seq = self.genome.fetch(seqid, 0, L)
+        prog.close()
+        m = AlignmentModel([SequenceRow(seqid, seq, f"{os.path.basename(self.genome.path)}")], "dna")
+        m.dirty = False
+        self.genome_contig = seqid
+        self._set_model(m)
+        self.view.feature_provider = self._genome_features
+        self.genome_panel.set_contig(seqid, L, fetch_seq=lambda s, e, _id=seqid: self.genome.fetch(_id, s, e))
+        self.genome_panel.set_annotation(self.annotation)
+        self.genome_panel.set_synteny(self.synteny_blocks)
+        self._grid_scrolled()
+        self.statusBar().showMessage(f"Loaded {seqid}: {L:,} bp", 5000)
+
+    def genome_load_annotation(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Load annotation", self.settings.value("last_genome_dir", ""),
+                                              "Annotations (*.gff *.gff3 *.gtf *.bed *.gb *.gbk *.gz);;All files (*)")
+        if not path:
+            return
+        only = None
+        try:
+            big = os.path.getsize(path) > 50_000_000
+        except OSError:
+            big = False
+        if big and self.genome_contig:
+            r = QMessageBox.question(self, "Large annotation", f"This file is large. Load only features on {self.genome_contig}?",
+                                     QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            if r == QMessageBox.Cancel:
+                return
+            only = self.genome_contig if r == QMessageBox.Yes else None
+        prog = QProgressDialog("Reading annotation…", None, 0, 0, self)
+        prog.setWindowModality(Qt.WindowModal); prog.show(); QApplication.processEvents()
+        try:
+            ann = GA.load_annotation(path, only)
+        except Exception as e:
+            prog.close(); QMessageBox.critical(self, "Annotation", str(e)); return
+        prog.close()
+        self.annotation = ann
+        if not self.genome and self.model.nrows:
+            # no genome open: treat the current first row as the reference
+            self.genome_contig = self.model.rows[0].name
+            self.genome_panel.set_contigs([(self.model.rows[0].name, len(self.model.rows[0].seq))], current=self.model.rows[0].name)
+            self.genome_panel.set_contig(self.model.rows[0].name, len(self.model.rows[0].seq),
+                                         fetch_seq=lambda s, e: self.model.rows[0].seq[s:e])
+            self.view.feature_provider = self._genome_features
+            self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
+        self.genome_panel.set_annotation(ann)
+        n_here = len(ann.genes_by_seq.get(self.genome_contig or "", []))
+        if ann.count() and n_here == 0:
+            QMessageBox.information(self, "Annotation", f"Loaded {ann.count():,} genes, but none on '{self.genome_contig}'.\n"
+                                    f"Sequence names in the file: {', '.join(list(ann.seqids())[:8])}{'…' if len(ann.seqids()) > 8 else ''}")
+        self.statusBar().showMessage(f"Annotation: {ann.count():,} genes ({n_here:,} on {self.genome_contig})", 6000)
+        self.view.viewport().update()
+
+    def genome_load_synteny(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Load PAF", self.settings.value("last_genome_dir", ""), "PAF (*.paf *.paf.gz);;All files (*)")
+        if not path:
+            return
+        try:
+            blocks = GA.load_paf(path, min_len=5000, min_mapq=0, query=self.genome_contig)
+            if not blocks:
+                blocks = GA.load_paf(path, min_len=5000)  # maybe the query names differ; show what we have
+        except Exception as e:
+            QMessageBox.critical(self, "PAF", str(e)); return
+        self.synteny_blocks = blocks
+        self.genome_panel.set_synteny(blocks)
+        self.statusBar().showMessage(f"Synteny: {len(blocks):,} blocks ≥5 kb", 5000)
+
+    def genome_goto(self):
+        if not self.genome_panel.isVisible():
+            self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
+        self.genome_panel.region_edit.setFocus(); self.genome_panel.region_edit.selectAll()
+
+    def genome_close(self):
+        if self.genome:
+            self.genome.close()
+        self.genome = None; self.annotation = None; self.synteny_blocks = []
+        self.view.feature_provider = None
+        self.a_g_panel.setChecked(False); self.genome_panel.hide()
+        self.view.viewport().update()
+
+    def _grid_scrolled(self, *_):
+        if not self.genome_panel.isVisible():
+            return
+        hs = self.view.horizontalScrollBar()
+        s = hs.value(); e = s + self.view._visible_cols()
+        self.genome_panel.set_focus(s, e)
+        self.genome_panel.ensure_window_contains(s, e)
+
+    def _genome_focus(self, s: int, e: int):
+        """Scroll/center the grid on [s,e)."""
+        vis = self.view._visible_cols()
+        if e - s < vis:
+            start = max(0, (s + e) // 2 - vis // 2)
+        else:
+            start = s
+        self.view.horizontalScrollBar().setValue(start)
+        if self.model.nrows:
+            self.view.set_cursor(0, s)
+            self.view.horizontalScrollBar().setValue(start)
+
+    def _genome_features(self, row: int, c0: int, c1: int):
+        """Feature provider for the grid: gene models of the genome row as CDS/exon features."""
+        if row != 0 or not self.annotation or not self.genome_contig:
+            return []
+        out = []
+        for g in self.annotation.overlapping(self.genome_contig, c0, c1):
+            t = max(g.transcripts, key=lambda t: (len(t.cds), t.end - t.start)) if g.transcripts else None
+            if t is None:
+                continue
+            col = "#1f5fbf" if g.strand > 0 else "#c0392b"
+            segs = [(a, b, "CDS") for a, b in t.cds] or [(a, b, "exon") for a, b in t.exons]
+            for a, b, kind in segs:
+                if b > c0 and a < c1:
+                    out.append(Feature(0, a, b, g.strand, kind, f"{g.name} {kind}", col))
+            if t.cds:
+                for a, b in t.utrs():
+                    if b > c0 and a < c1:
+                        out.append(Feature(0, a, b, g.strand, "UTR", f"{g.name} UTR", "#9aa8c7" if g.strand > 0 else "#d9a59c"))
+        return out
+
+    def _region_features(self, seqid: str, s: int, e: int) -> list:
+        """Gene features for a region re-based to 0 (for 'open region in editor')."""
+        feats = []
+        if not self.annotation:
+            return feats
+        for g in self.annotation.overlapping(seqid, s, e):
+            col = "#1f5fbf" if g.strand > 0 else "#c0392b"
+            for t in g.transcripts:
+                for a, b in t.exons:
+                    if b > s and a < e:
+                        feats.append(Feature(0, max(a, s) - s, min(b, e) - s, g.strand, "exon", f"{g.name} {t.name} exon", col))
+                for a, b in t.cds:
+                    if b > s and a < e:
+                        feats.append(Feature(0, max(a, s) - s, min(b, e) - s, g.strand, "CDS", f"{g.name} {t.name} CDS", col))
+                break  # primary transcript only for overlay clarity
+        return feats
+
+    def _genome_open_region(self, s: int, e: int):
+        if not self.model.nrows:
+            return
+        seqid = self.genome_contig or self.model.rows[0].name
+        seq = self.model.rows[0].seq[s:e]
+        m = AlignmentModel([SequenceRow(f"{seqid}:{s + 1}-{e}", seq)], "dna")
+        m.features = self._region_features(seqid, s, e)
+        m.dirty = False
+        w = MainWindow(); w._set_model(m); w.setWindowTitle(f"NeoEdit — {seqid}:{s + 1:,}-{e:,}")
+        w.show(); self._children.append(w)
+
+    def _genome_open_gene(self, gene):
+        pad = 500
+        self._genome_open_region(max(0, gene.start - pad), min(len(self.model.rows[0].seq), gene.end + pad))
 
     # ------------------------------------------------------------ help
     def shortcuts(self):
