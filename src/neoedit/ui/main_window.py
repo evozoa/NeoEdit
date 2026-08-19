@@ -182,7 +182,7 @@ class MainWindow(QMainWindow):
         self.a_blast = A("BLAST selected sequence (NCBI web)", self.blast)
 
         # alignment ops
-        self.a_align = A("&Align with MAFFT / MUSCLE / Clustal Omega…", self.align_external, "Ctrl+M")
+        self.a_align = A("&Align with MAFFT…", self.align_external, "Ctrl+M")
         self.a_rm_gapcols = A("Remove gap-only &columns", self.model_call("remove_gap_only_columns"))
         self.a_pad = A("&Pad sequences to equal length", self.model_call("pad_to_equal_length"))
         self.a_insgapcol = A("Insert gap column at cursor", lambda: self.model.insert_gap_columns(self.view.cur_col, 1), "Ctrl+Space")
@@ -834,24 +834,26 @@ class MainWindow(QMainWindow):
         d = AlignDialog(self, self.settings)
         if not d.exec():
             return
-        name, extra, sel_only = d.values()
-        rows = self.view.target_rows() if sel_only else list(range(self.model.nrows))
+        v = d.values()
+        rows = self.view.target_rows() if v.pop("sel_only") else list(range(self.model.nrows))
         if len(rows) < 2:
             rows = list(range(self.model.nrows))
-        exe = self.settings.value(f"exe/{name}") or None
-        prog = QProgressDialog(f"Running {name}…", None, 0, 0, self)
+        exe = self.settings.value("exe/MAFFT") or None
+        prog = QProgressDialog("Running MAFFT…", None, 0, 0, self)
         prog.setWindowModality(Qt.WindowModal); prog.show(); QApplication.processEvents()
         try:
-            aligned = EXT.run_aligner(name, [self.model.rows[i] for i in rows], exe, extra)
+            aligned = EXT.run_mafft([self.model.rows[i] for i in rows], exe, seq_type=self.model.seq_type, **v)
         except Exception as e:
             prog.close()
-            QMessageBox.critical(self, name, str(e)); return
+            QMessageBox.critical(self, "MAFFT", str(e)); return
         prog.close()
-        self.model.begin_batch(f"Align ({name})")
+        self.model.begin_batch("Align (MAFFT)")
         for i, r in zip(rows, aligned):
             self.model.set_sequence(i, r.seq)
+            if r.description != self.model.rows[i].description:
+                self.model.rows[i].description = r.description
         self.model.end_batch()
-        self.statusBar().showMessage(f"{name} finished: {len(rows)} sequences aligned", 5000)
+        self.statusBar().showMessage(f"MAFFT finished: {len(rows)} sequences aligned", 5000)
 
     def extract_cols(self):
         s = self.view.selection()
@@ -945,7 +947,7 @@ Selection
 Other
   Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next, Ctrl+R reverse complement,
   Ctrl+T translation overlay, Ctrl+Shift+T translate, Ctrl+Shift+O ORF finder, Ctrl+Shift+P primer design,
-  Ctrl+M align with external program
+  Ctrl+M align with MAFFT
 """
         TextDialog(self, "Keyboard shortcuts", txt).exec()
 

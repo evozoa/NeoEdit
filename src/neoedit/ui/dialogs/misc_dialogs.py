@@ -161,30 +161,53 @@ class PlotDialog(QDialog):
         bb = QDialogButtonBox(QDialogButtonBox.Close); bb.rejected.connect(self.reject); lay.addWidget(bb)
 
 
-# ------------------------------------------------------- External aligner
+# ------------------------------------------------------- MAFFT
 class AlignDialog(QDialog):
     def __init__(self, parent=None, settings=None):
         super().__init__(parent)
-        self.setWindowTitle("Align with external program")
+        self.setWindowTitle("Align with MAFFT")
         self.settings = settings
         lay = QVBoxLayout(self)
+        exe = EXT.find_mafft(settings.value("exe/MAFFT") if settings else None)
+        status = QLabel(f"MAFFT: {exe}  ({EXT.mafft_version(exe)})" if exe else
+                        "MAFFT not found.  " + EXT.mafft_install_hint() + "\nSet its location in Edit > Preferences.")
+        status.setWordWrap(True)
+        lay.addWidget(status)
         form = QFormLayout()
-        self.prog = QComboBox()
-        for name in EXT.ALIGNERS:
-            exe = EXT.find_executable(name, settings.value(f"exe/{name}") if settings else None)
-            self.prog.addItem(f"{name}  ({'found: ' + exe if exe else 'not found'})", name)
+        self.strategy = QComboBox()
+        for label, _ in EXT.MAFFT_STRATEGIES:
+            self.strategy.addItem(label)
+        self.strategy.setCurrentIndex(int(settings.value("mafft/strategy", 0)) if settings else 0)
+        self.threads = QSpinBox(); self.threads.setRange(0, 256); self.threads.setSpecialValueText("all cores")
+        self.threads.setValue(int(settings.value("mafft/threads", 0)) if settings else 0)
+        self.adjust = QCheckBox("Adjust direction (reverse-complement sequences as needed; nucleotide only)")
+        self.adjust.setChecked(bool(settings and settings.value("mafft/adjust", False) in (True, "true")))
+        self.keep_order = QCheckBox("Keep input order"); self.keep_order.setChecked(True)
         self.extra = QLineEdit()
         self.scope = QComboBox(); self.scope.addItems(["All sequences", "Selected sequences only"])
-        form.addRow("Program", self.prog)
-        form.addRow("Extra arguments", self.extra)
+        form.addRow("Strategy", self.strategy)
+        form.addRow("Threads", self.threads)
+        form.addRow("", self.adjust)
+        form.addRow("", self.keep_order)
+        form.addRow("Extra MAFFT arguments", self.extra)
         form.addRow("Scope", self.scope)
         lay.addLayout(form)
-        lay.addWidget(QLabel("Executable paths can be set in Edit > Preferences."))
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("Align")
+        bb.button(QDialogButtonBox.Ok).setEnabled(bool(exe))
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject); lay.addWidget(bb)
 
+    def accept(self):
+        if self.settings:
+            self.settings.setValue("mafft/strategy", self.strategy.currentIndex())
+            self.settings.setValue("mafft/threads", self.threads.value())
+            self.settings.setValue("mafft/adjust", self.adjust.isChecked())
+        super().accept()
+
     def values(self):
-        return self.prog.currentData(), self.extra.text().split(), self.scope.currentIndex() == 1
+        return dict(strategy=self.strategy.currentIndex(), threads=self.threads.value(),
+                    adjust_direction=self.adjust.isChecked(), keep_order=self.keep_order.isChecked(),
+                    extra_args=self.extra.text().split(), sel_only=self.scope.currentIndex() == 1)
 
 
 # ------------------------------------------------------- Preferences
@@ -194,18 +217,22 @@ class PreferencesDialog(QDialog):
         self.setWindowTitle("Preferences")
         self.settings = settings
         lay = QVBoxLayout(self)
-        grp = QGroupBox("External program paths (leave blank to search PATH)")
+        grp = QGroupBox("MAFFT")
         form = QFormLayout(grp)
         self.edits = {}
-        for name in EXT.ALIGNERS:
-            row = QHBoxLayout()
-            ed = QLineEdit(settings.value(f"exe/{name}", ""))
-            b = QPushButton("…")
-            b.clicked.connect(lambda _, e=ed: self._browse(e))
-            row.addWidget(ed); row.addWidget(b)
-            w = QWidget(); w.setLayout(row)
-            form.addRow(name, w)
-            self.edits[name] = ed
+        row = QHBoxLayout()
+        ed = QLineEdit(settings.value("exe/MAFFT", ""))
+        ed.setPlaceholderText("leave blank to search PATH")
+        b = QPushButton("…"); b.clicked.connect(lambda _, e=ed: self._browse(e))
+        row.addWidget(ed); row.addWidget(b)
+        w = QWidget(); w.setLayout(row)
+        form.addRow("MAFFT executable", w)
+        self.edits["MAFFT"] = ed
+        found = EXT.find_mafft(settings.value("exe/MAFFT") or None)
+        hint = QLabel((f"Found: {found}  ({EXT.mafft_version(found)})" if found else
+                       "Not found. To install: " + EXT.mafft_install_hint()))
+        hint.setWordWrap(True)
+        form.addRow("", hint)
         lay.addWidget(grp)
         g2 = QGroupBox("Defaults")
         f2 = QFormLayout(g2)

@@ -30,7 +30,7 @@ actually use, on a codebase that can keep evolving:
   drawn as features, mismatch check of each primer against every sequence in the
   alignment (for conserved-site design), CSV/FASTA export.
 * **Analysis** – identity matrix, entropy/identity conservation plots, sequence
-  statistics, consensus report, external MAFFT / MUSCLE / Clustal Omega alignment,
+  statistics, consensus report, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
   NCBI BLAST launcher.
 * **Formats** – FASTA, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, EMBL, MSF and a
   best-effort reader for legacy BioEdit `.bio` files.
@@ -44,8 +44,8 @@ neoedit examples/cox1_demo.fasta
 python -m neoedit
 ```
 
-Requires Python ≥ 3.10. External aligners (`mafft`, `muscle`, `clustalo`) are
-optional and found on PATH or set in *Edit ▸ Preferences*.
+Requires Python ≥ 3.10. MAFFT is optional and found on PATH or set in *Edit ▸ Preferences*
+(`conda install -c bioconda mafft`, `brew install mafft`, or the MAFFT Windows installer).
 
 ## Tests
 

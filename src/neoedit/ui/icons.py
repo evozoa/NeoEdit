@@ -131,11 +131,14 @@ def _primer():
 
 
 def _align():
+    """MAFFT: bold 'M' above three aligned colour bars (MAFFT has no official logo)."""
     pm, p = _pix()
+    p.setPen(QColor("#1f3b73")); p.setFont(_font(11, bold=True, family="DejaVu Sans"))
+    p.drawText(QRect(0, -1, SZ, 14), Qt.AlignCenter, "M")
     cols = ["#008000", "#0000ff", "#ff0000", "#000000"]
-    for i, (x, w) in enumerate([(3, 14), (6, 11), (4, 13)]):
-        for k in range(4):
-            p.fillRect(QRectF(x + k * (w / 4), 4 + i * 5, w / 4 - 0.6, 3.6), QColor(cols[(k + i) % 4]))
+    for i in range(3):
+        for k in range(5):
+            p.fillRect(QRectF(2.5 + k * 3.6, 13 + i * 3, 3.0, 2.3), QColor(cols[(k + i) % 4]))
     p.end(); return pm
 
 
