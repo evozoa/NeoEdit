@@ -164,6 +164,9 @@ class MainWindow(QMainWindow):
         self.a_consensus = A("Show &consensus", self._toggle_consensus, None, True); self.a_consensus.setChecked(True)
         self.a_translation = A("Show &translation under DNA", self._toggle_translation, "Ctrl+T", True)
         self.a_features = A("Show &features", self._toggle_features, None, True); self.a_features.setChecked(True)
+        self.a_shade_feat = A("Shade feature &regions", self._toggle_shade_features, None, True,
+                              "Tint residues covered by a feature; off by default so gene models "
+                              "do not wash out the sequence")
         self.a_dock = self.dock.toggleViewAction(); self.a_dock.setText("Features &panel")
         self.a_dots = A("Identities as &dots", self._toggle_dots, None, True)
         self.view_group = QActionGroup(self)
@@ -279,7 +282,7 @@ class MainWindow(QMainWindow):
             e.addAction(a) if a else e.addSeparator()
 
         v = mb.addMenu("&View")
-        for a in (self.a_zoom_in, self.a_zoom_out, self.a_font, self.a_crisp, None, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None, self.a_consensus, self.a_translation, self.a_features, self.a_dock, None):
+        for a in (self.a_zoom_in, self.a_zoom_out, self.a_font, self.a_crisp, None, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None, self.a_consensus, self.a_translation, self.a_features, self.a_shade_feat, self.a_dock, None):
             v.addAction(a) if a else v.addSeparator()
         wm = v.addMenu("Text &weight")
         for a in (self.a_w_reg, self.a_w_semi, self.a_w_bold):
@@ -642,6 +645,9 @@ class MainWindow(QMainWindow):
         rp, cp = self.settings.value("row_pad"), self.settings.value("col_pad")
         if rp is not None or cp is not None:
             self.view.set_spacing(int(rp) if rp is not None else None, int(cp) if cp is not None else None)
+        sh = self.settings.value("shade_features", False)
+        sh = sh in (True, "true", "True", 1, "1")
+        self.a_shade_feat.setChecked(sh); self.view.shade_features = sh
         inv = self.settings.value("inverse_view", False)
         inv = inv in (True, "true", "True", 1, "1")
         self._set_inverse(inv)
@@ -784,6 +790,11 @@ class MainWindow(QMainWindow):
         (self.a_inverse if on else self.a_normal).setChecked(True)
         self.view.color_target = "background" if on else "text"
         self.settings.setValue("inverse_view", on)
+        self.view.viewport().update()
+
+    def _toggle_shade_features(self, on):
+        self.view.shade_features = on
+        self.settings.setValue("shade_features", on)
         self.view.viewport().update()
 
     def _toggle_dots(self, on):

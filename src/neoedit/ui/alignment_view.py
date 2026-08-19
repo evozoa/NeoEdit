@@ -87,6 +87,8 @@ class AlignmentView(QAbstractScrollArea):
         self.trans_frame = 0
         self.trans_table = 1
         self.show_features = True
+        self.shade_features = False     # tint residues under a feature (off: only a marker bar)
+        self.feature_alpha = 45
         self.shade_threshold = 0.5
         self._consensus_cache = None
         self._drag_block = None       # (rows, start, end, last_col, kind)  kind: "crunch" | "downstream"
@@ -506,16 +508,19 @@ class AlignmentView(QAbstractScrollArea):
                 xs = grid_left + (max(f.start, c0) - hs) * self.cell_w
                 xe = grid_left + (min(f.end, c1) - hs) * self.cell_w
                 col = QColor(f.color)
-                col.setAlpha(70)
-                p.fillRect(xs, y, xe - xs, self.cell_h, col)
-                pen = QPen(QColor(f.color), 3)
-                p.setPen(pen)
-                p.drawLine(xs, y + self.cell_h - 2, xe, y + self.cell_h - 2)
+                if self.shade_features:
+                    col.setAlpha(self.feature_alpha)
+                    p.fillRect(xs, y, xe - xs, self.cell_h, col)
+                # marker bar under the row: keeps residues legible even when a
+                # feature (e.g. a gene model) spans the whole visible width
+                bar_h = 2
+                p.fillRect(xs, y + self.cell_h - bar_h, max(1, xe - xs), bar_h, QColor(f.color))
+                p.setPen(QPen(QColor(f.color), 1))
                 # arrow head
                 if f.strand > 0:
-                    p.drawLine(xe - 4, y + self.cell_h - 5, xe, y + self.cell_h - 1)
+                    p.drawLine(xe - 4, y + self.cell_h - 6, xe - 1, y + self.cell_h - 2)
                 else:
-                    p.drawLine(xs + 4, y + self.cell_h - 5, xs, y + self.cell_h - 1)
+                    p.drawLine(xs + 4, y + self.cell_h - 6, xs + 1, y + self.cell_h - 2)
         # --- cursor
         if m.nrows and r0 <= self.cur_row < r1 and c0 <= self.cur_col <= c1:
             rc = self.cell_rect(self.cur_row, self.cur_col)
