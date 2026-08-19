@@ -25,6 +25,7 @@ from .icons import icon, app_icon as icon_app
 from .dialogs.translate_dialog import TranslateDialog
 from .dialogs.orf_dialog import ORFFinderDialog
 from .dialogs.primer_dialog import PrimerDialog
+from .dialogs.design_dialog import DesignDialog
 from .dialogs.misc_dialogs import (FindDialog, StatsDialog, IdentityDialog, PlotDialog, AlignDialog,
                                    PreferencesDialog, NewSequenceDialog)
 from .dialogs.common import TextDialog
@@ -218,7 +219,9 @@ class MainWindow(QMainWindow):
 
         # analysis
         self.a_orf = A("&ORF finder…", self.orf_finder, "Ctrl+Shift+O")
-        self.a_primer = A("&Primer design…", self.primer_design, "Ctrl+Shift+P")
+        self.a_primer = A("&Primer design (single template)…", self.primer_design, "Ctrl+Shift+P")
+        self.a_design = A("&Conserved / discriminating primers…", self.design_primers, "Ctrl+Shift+D",
+                          tip="Design primers across the alignment: universal for a group, or discriminating against another group (eDNA)")
         self.a_stats = A("Sequence &statistics", self.stats)
         self.a_ident = A("&Identity matrix", self.identity)
         self.a_plot = A("&Conservation / entropy plot", self.plot)
@@ -302,7 +305,7 @@ class MainWindow(QMainWindow):
             al.addAction(a) if a else al.addSeparator()
 
         an = mb.addMenu("A&nalysis")
-        for a in (self.a_orf, self.a_primer, None, self.a_stats, self.a_ident, self.a_plot, self.a_cons_report):
+        for a in (self.a_orf, self.a_primer, self.a_design, None, self.a_stats, self.a_ident, self.a_plot, self.a_cons_report):
             an.addAction(a) if a else an.addSeparator()
 
         gm = mb.addMenu("&Genome")
@@ -1000,6 +1003,16 @@ class MainWindow(QMainWindow):
         d = PrimerDialog(self.model, rows, cols, self)
         d.pairSelected.connect(lambda r, s_, e: self.view.select_region(r, r, s_, e - 1))
         d.featuresReady.connect(self._add_features)
+        d.show(); self._children.append(d)
+
+    def design_primers(self):
+        if self.model.nrows < 2:
+            QMessageBox.information(self, "Design", "Load an alignment of at least two sequences first."); return
+        if not self.model.is_nucleotide():
+            QMessageBox.information(self, "Design", "Primer design needs nucleotide sequences."); return
+        d = DesignDialog(self.model, self.view, self)
+        d.featuresReady.connect(self._add_features)
+        d.regionSelected.connect(lambda a, b: self.view.select_region(0, self.model.nrows - 1, a, b - 1))
         d.show(); self._children.append(d)
 
     def _add_features(self, feats):
