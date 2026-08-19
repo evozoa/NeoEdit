@@ -118,3 +118,33 @@ def test_genome_panel_gui(tmp_path):
     assert child.model.rows[0].seq == seq[1000:5000] and child.model.features
     w.genome_panel.grab(); w.view.viewport().repaint()
     child.close(); w.model.dirty = False; w.close()
+
+
+def test_circular_view(tmp_path):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from neoedit.ui.circular_view import CircularView, gc_series, gene_color
+    from neoedit.genome.annotations import load_genbank
+    from neoedit.model import io as mio
+    HERE = os.path.dirname(__file__)
+    gb = os.path.join(HERE, "..", "examples", "mito", "NC_002333.gb")
+    gc, skew = gc_series("GGGGCCCCAAAATTTT", 2)
+    assert gc == [1.0, 0.0] and skew[0] == 0.0
+    gc, skew = gc_series("GGGGGGGGCCCCCCCC", 2)
+    assert skew == [1.0, -1.0]
+    ann = load_genbank(gb)
+    seq = mio.load(gb, "genbank").rows[0].seq
+    v = CircularView(); v.resize(600, 600)
+    v.set_data("NC_002333.2", len(seq), ann, lambda s, e: seq[s:e], "zebrafish mtDNA")
+    v.set_focus(6400, 8000)
+    v.grab()                      # paints without error and populates hit paths
+    assert v._hits and any(g.name.upper() == "COX1" for _p, g in v._hits)
+    # colors distinguish feature classes
+    genes = {g.name.upper(): g for _p, g in v._hits}
+    assert gene_color(genes["COX1"]) != gene_color(genes["TRNA"]) if "TRNA" in genes else True
+    png = tmp_path / "c.png"; svg = tmp_path / "c.svg"
+    v.export_image(str(png), 500); v.export_image(str(svg), 500)
+    assert png.stat().st_size > 5000 and svg.stat().st_size > 5000
+    assert "<svg" in svg.read_text()[:400]

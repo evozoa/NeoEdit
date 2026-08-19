@@ -31,6 +31,17 @@ actually use, on a codebase that can keep evolving:
   selection, size/Tm/GC constraints, salt/Mg/dNTP, hairpin/dimer metrics, primers
   drawn as features, mismatch check of each primer against every sequence in the
   alignment (for conserved-site design), CSV/FASTA export.
+* **Genome context** – three synced tiers: contig/chromosome overview, gene-model
+  and synteny region view (GFF3/GTF/BED/GenBank + PAF), and the alignment grid;
+  indexed FASTA so whole chromosomes open instantly. GenBank references (mitogenome/
+  plasmid) populate the gene view from their own features; MAFFT `--add --keeplength`
+  anchors a population sample to the reference without moving its coordinates, with a
+  per-site variation track.
+* **Circular map** – mitogenome/plasmid view with strand-separated gene arrows, GC
+  content and GC skew rings, focal wedge synced to the grid; SVG/PNG export.
+* **Primer design across an alignment** – conserved (universal) or discriminating
+  (eDNA) primers using sequence groups, conservation masking, 3'-weighted mismatch
+  scoring, IUPAC-degenerate options and an in-silico PCR table.
 * **Analysis** – identity matrix, entropy/identity conservation plots, sequence
   statistics, consensus report, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
   NCBI BLAST launcher.

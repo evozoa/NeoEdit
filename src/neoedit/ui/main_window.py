@@ -18,6 +18,7 @@ from ..analysis import external as EXT
 from .alignment_view import AlignmentView
 from .feature_track import FeaturePanel
 from .genome_panel import GenomePanel
+from .circular_view import CircularView
 from ..genome.fasta_index import IndexedFasta
 from ..genome import annotations as GA
 from ..genome.projection import RefProjection
@@ -242,6 +243,8 @@ class MainWindow(QMainWindow):
         self.a_g_goto = A("Go to &region / gene…", self.genome_goto, "Ctrl+J")
         self.a_g_openreg = A("Open current region in &new editor window", lambda: self._genome_open_region(*self.genome_panel.window()))
         self.a_g_clear = A("&Close genome (keep sequence)", self.genome_close)
+        self.a_g_circ = A("Circular &map (mitogenome / plasmid)…", self.circular_map, "Ctrl+Shift+M",
+                          tip="Circular gene map with GC content and GC skew; export as SVG or PNG")
 
         for name, act in (("open", self.a_open), ("save", self.a_save), ("undo", self.a_undo), ("redo", self.a_redo),
                           ("mode_slide", self.a_mode_slide), ("mode_edit", self.a_mode_edit), ("mode_grab", self.a_mode_grab),
@@ -309,7 +312,7 @@ class MainWindow(QMainWindow):
             an.addAction(a) if a else an.addSeparator()
 
         gm = mb.addMenu("&Genome")
-        for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_goto, self.a_g_openreg, None, self.a_g_clear):
+        for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_circ, self.a_g_goto, self.a_g_openreg, None, self.a_g_clear):
             gm.addAction(a) if a else gm.addSeparator()
 
         h = mb.addMenu("&Help")
@@ -1263,6 +1266,28 @@ class MainWindow(QMainWindow):
         self.genome_panel.set_synteny(blocks)
         self.statusBar().showMessage(f"Synteny: {len(blocks):,} blocks ≥5 kb", 5000)
 
+    def circular_map(self):
+        if not self.model.nrows:
+            return
+        from .dialogs.circular_dialog import CircularDialog
+        ann = self.annotation
+        if ann is None:
+            QMessageBox.information(self, "Circular map",
+                                    "Load an annotation first (Genome ▸ Open GenBank reference…, or Load annotation…).\n"
+                                    "The map will still draw the sequence rings without genes.")
+        d = CircularDialog(self, seqid=self.genome_contig or self.model.rows[0].name,
+                           length=self.proj().ref_len, ann=ann,
+                           fetch_seq=lambda s, e: self.ref_ungapped()[s:e],
+                           title=(self.genome_contig or self.model.rows[0].name))
+        d.positionClicked.connect(lambda p: self._genome_focus(p, p))
+        d.geneActivated.connect(self._genome_open_gene)
+        if self.genome_panel.isVisible():
+            self.genome_panel.region.windowChanged.connect(lambda a, b: d.view.set_window(a, b))
+        # keep the focus wedge in sync with the grid
+        self._circ = d
+        d.show(); self._children.append(d)
+        self._grid_scrolled()
+
     def genome_goto(self):
         if not self.genome_panel.isVisible():
             self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
@@ -1277,7 +1302,16 @@ class MainWindow(QMainWindow):
         self.view.viewport().update()
 
     def _grid_scrolled(self, *_):
+        if not self.genome_panel.isVisible() and getattr(self, "_circ", None) is None:
+            return
         if not self.genome_panel.isVisible():
+            hs = self.view.horizontalScrollBar()
+            c0 = hs.value(); c1 = c0 + self.view._visible_cols()
+            proj = self.proj()
+            try:
+                self._circ.view.set_focus(proj.col_to_ref(c0), max(proj.col_to_ref(c1), proj.col_to_ref(c0) + 1))
+            except RuntimeError:
+                self._circ = None
             return
         hs = self.view.horizontalScrollBar()
         c0 = hs.value(); c1 = c0 + self.view._visible_cols()
@@ -1285,6 +1319,12 @@ class MainWindow(QMainWindow):
         s, e = proj.col_to_ref(c0), proj.col_to_ref(c1)
         self.genome_panel.set_focus(s, max(e, s + 1))
         self.genome_panel.ensure_window_contains(s, max(e, s + 1))
+        circ = getattr(self, "_circ", None)
+        if circ is not None:
+            try:
+                circ.view.set_focus(s, max(e, s + 1))
+            except RuntimeError:
+                self._circ = None
 
     def _genome_focus(self, s: int, e: int):
         """Scroll/center the grid on reference span [s,e)."""
