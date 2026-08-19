@@ -280,7 +280,7 @@ class RegionView(QWidget):
                     p.setPen(QColor("#000")); p.drawText(QPointF(x0 + 3, ty + 10), lab)
 
         # focus box (tier 3 region)
-        if self.focus:
+        if self.focus and self.focus[1] > s and self.focus[0] < e:
             fx0, fx1 = self._x(self.focus[0]), self._x(self.focus[1])
             p.setPen(QPen(RED, 2)); p.setBrush(Qt.NoBrush)
             p.drawRect(QRectF(max(left - 1, fx0), 2, max(3.0, min(right + 1, fx1) - max(left - 1, fx0)), H - 4))
@@ -295,6 +295,8 @@ class RegionView(QWidget):
         base = QColor("#1f5fbf") if g.strand > 0 else QColor("#c0392b")
         if g.biotype and "protein" not in g.biotype and g.biotype not in ("gene", "mRNA", "CDS", "bed"):
             base = QColor("#7d3c98") if g.strand > 0 else QColor("#a04000")
+        if g.low_confidence:
+            base.setAlpha(110)          # faded = partial / low-identity lift-over
         p.setPen(QPen(base, 1)); p.drawLine(QPointF(x0, mid), QPointF(x1, mid))
         # strand chevrons along intron line
         if x1 - x0 > 30:
@@ -324,7 +326,7 @@ class RegionView(QWidget):
             p.setBrush(base); p.drawRect(QRectF(cx0, mid - 6, max(1.0, cx1 - cx0), 12))
         # label
         label = g.name if not self.expanded else f"{g.name} {t.name}"
-        p.setPen(QColor("#222"))
+        p.setPen(QColor("#222") if not g.low_confidence else QColor("#888"))
         lx = max(left, self._x(t.start))
         p.drawText(QPointF(lx, mid + 17 if lane_h > 22 else mid + 15), label)
         hit = QRectF(x0, mid - 7, max(4.0, x1 - x0), 14)
@@ -360,7 +362,10 @@ class RegionView(QWidget):
             info = (f"<b>{g.name}</b> ({g.id})  {g.seqid}:{fmt_bp(g.start + 1)}-{fmt_bp(g.end)} "
                     f"({'+' if g.strand > 0 else '-'})  {g.biotype}<br>{t.name}: {len(t.exons)} exons"
                     + (f", CDS {sum(b - a for a, b in t.cds):,} bp" if t.cds else "")
-                    + "".join(f"<br>{k}: {v}" for k, v in g.attrs.items() if k in ("description", "product")))
+                    + "".join(f"<br>{k}: {v}" for k, v in g.attrs.items() if k in ("description", "product"))
+                    + (f"<br><i>lift-over coverage {g.attrs.get('coverage')}, identity {g.attrs.get('sequence_ID')}"
+                       f"{' — partial' if g.attrs.get('partial_mapping') == 'True' else ''}"
+                       f"{' — low identity' if g.attrs.get('low_identity') == 'True' else ''}</i>" if "coverage" in g.attrs else ""))
             QToolTip.showText(QCursor.pos(), info, self)
             self.hoverInfo.emit(f"{g.name}  {g.seqid}:{fmt_bp(g.start + 1)}-{fmt_bp(g.end)} ({'+' if g.strand > 0 else '-'})")
             return

@@ -56,6 +56,12 @@ class Gene:
     def __len__(self):
         return self.end - self.start
 
+    @property
+    def low_confidence(self) -> bool:
+        """Liftoff flags: partial mapping or low identity."""
+        a = self.attrs
+        return a.get("partial_mapping") == "True" or a.get("low_identity") == "True"
+
 
 @dataclass
 class SyntenyBlock:
@@ -203,7 +209,8 @@ def load_gff(path: str, only_seqid: str | None = None) -> Annotation:
                 name = a.get("Name", a.get("gene", a.get("gene_name", fid)))
                 g = Gene(fid or name, name, seqid, start, end, st,
                          a.get("gene_biotype", a.get("biotype", a.get("gene_type", ftl))),
-                         attrs={k: v for k, v in a.items() if k in ("description", "product", "gene", "Note", "Dbxref")})
+                         attrs={k: v for k, v in a.items() if k in ("description", "product", "gene", "Note", "Dbxref",
+                                                                   "coverage", "sequence_ID", "partial_mapping", "low_identity", "extra_copy_number")})
                 genes[g.id] = g
                 ann.add_gene(g)
             elif ftl in ("mrna", "transcript", "ncrna", "lnc_rna", "rrna", "trna", "snorna", "snrna", "mirna",
