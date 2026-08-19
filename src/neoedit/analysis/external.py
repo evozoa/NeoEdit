@@ -106,6 +106,51 @@ def run_mafft(rows: list[SequenceRow], exe: str | None = None, strategy: int = 0
     return result
 
 
+def mafft_add(existing: list[SequenceRow], new: list[SequenceRow], exe: str | None = None,
+              threads: int = 0, adjust_direction: bool = True, timeout: int = 3600) -> list[SequenceRow]:
+    """Anchor `new` sequences to an existing alignment with MAFFT --add --keeplength.
+
+    The existing alignment's columns are preserved exactly (insertions unique to the
+    added sequences are trimmed), so reference coordinates stay valid. Returns
+    existing rows unchanged + the added rows, gapped to the alignment length.
+    """
+    exe = find_mafft(exe)
+    if not exe:
+        raise FileNotFoundError("MAFFT executable not found.\n\n" + mafft_install_hint())
+    with tempfile.TemporaryDirectory() as td:
+        ref = os.path.join(td, "ref.fasta")
+        add = os.path.join(td, "add.fasta")
+        with open(ref, "w") as fh:
+            for i, r in enumerate(existing):
+                fh.write(f">e{i}\n{r.seq if any(c in '-.~' for c in r.seq) else r.seq}\n")
+        with open(add, "w") as fh:
+            for i, r in enumerate(new):
+                fh.write(f">a{i}\n{r.ungapped()}\n")
+        cmd = [exe, "--quiet", "--thread", str(threads if threads > 0 else -1), "--keeplength"]
+        if adjust_direction:
+            cmd.append("--adjustdirection")
+        cmd += ["--add", add, ref]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if proc.returncode != 0 or not proc.stdout.strip():
+            raise RuntimeError(f"MAFFT --add failed (exit {proc.returncode}):\n{proc.stderr[-2000:]}")
+    m = mio.loads(proc.stdout, "fasta")
+    by_id = {}
+    flipped = set()
+    for r in m.rows:
+        name = r.name
+        if name.startswith("_R_"):
+            name = name[3:]; flipped.add(name)
+        by_id[name] = r.seq
+    out = [r.copy() for r in existing]          # columns preserved -> keep originals verbatim
+    for i, r in enumerate(new):
+        nr = r.copy()
+        nr.seq = by_id.get(f"a{i}", r.seq)
+        if f"a{i}" in flipped:
+            nr.description = (nr.description + " [reverse-complemented by MAFFT]").strip()
+        out.append(nr)
+    return out
+
+
 def blast_url(seq: str, program: str = "blastn") -> str:
     s = "".join(c for c in seq if c not in "-.~")
     db = "nt" if program in ("blastn", "tblastx", "tblastn") else "nr"

@@ -20,6 +20,7 @@ from .feature_track import FeaturePanel
 from .genome_panel import GenomePanel
 from ..genome.fasta_index import IndexedFasta
 from ..genome import annotations as GA
+from ..genome.projection import RefProjection
 from .icons import icon, app_icon as icon_app
 from .dialogs.translate_dialog import TranslateDialog
 from .dialogs.orf_dialog import ORFFinderDialog
@@ -54,6 +55,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
         self.genome: IndexedFasta | None = None
         self.genome_contig: str | None = None
+        self._proj: RefProjection | None = None
+        self._ref_ungapped: str | None = None
         self.annotation: GA.Annotation | None = None
         self.synteny_blocks: list = []
         self.genome_panel.contigSelected.connect(self._genome_load_contig)
@@ -221,6 +224,10 @@ class MainWindow(QMainWindow):
         self.a_about = A("&About", self.about)
 
         # genome
+        self.a_g_ref = A("Open Gen&Bank reference (mitogenome/plasmid)…", self.genome_open_reference,
+                         tip="Open an annotated GenBank record: sequence becomes the reference row, its features populate the gene view")
+        self.a_g_add = A("Add se&quences anchored to reference…", self.genome_add_anchored,
+                         tip="MAFFT --add --keeplength: align new sequences to the current alignment without changing its columns")
         self.a_g_open = A("Open &genome FASTA…", self.genome_open, "Ctrl+Shift+G",
                           tip="Open a (large, indexed) genome FASTA and pick a contig/chromosome")
         self.a_g_ann = A("Load &annotation (GFF3/GTF/BED/GenBank)…", self.genome_load_annotation)
@@ -293,7 +300,7 @@ class MainWindow(QMainWindow):
             an.addAction(a) if a else an.addSeparator()
 
         gm = mb.addMenu("&Genome")
-        for a in (self.a_g_open, self.a_g_ann, self.a_g_syn, None, self.a_g_panel, self.a_g_goto, self.a_g_openreg, None, self.a_g_clear):
+        for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_goto, self.a_g_openreg, None, self.a_g_clear):
             gm.addAction(a) if a else gm.addSeparator()
 
         h = mb.addMenu("&Help")
@@ -437,6 +444,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(title)
 
     def _on_model(self, what):
+        self._proj = None
+        self._ref_ungapped = None
         self._update_status()
         if what == "type":
             self._rebuild_scheme_menu(); self._fill_scheme_combo()
@@ -972,6 +981,16 @@ class MainWindow(QMainWindow):
         if on:
             self.splitter.setSizes([260, max(200, self.height() - 260)])
 
+    def proj(self) -> RefProjection:
+        if self._proj is None or self._proj.ncols != (len(self.model.rows[0].seq) if self.model.nrows else 0):
+            self._proj = RefProjection(self.model.rows[0].seq if self.model.nrows else "")
+        return self._proj
+
+    def ref_ungapped(self) -> str:
+        if self._ref_ungapped is None:
+            self._ref_ungapped = self.model.rows[0].ungapped() if self.model.nrows else ""
+        return self._ref_ungapped
+
     def genome_open(self):
         if not self._maybe_save():
             return
@@ -1030,10 +1049,102 @@ class MainWindow(QMainWindow):
         self._set_model(m)
         self.view.feature_provider = self._genome_features
         self.genome_panel.set_contig(seqid, L, fetch_seq=lambda s, e, _id=seqid: self.genome.fetch(_id, s, e))
+        self.genome_panel.region.fetch_var = self._variation
         self.genome_panel.set_annotation(self.annotation)
         self.genome_panel.set_synteny(self.synteny_blocks)
         self._grid_scrolled()
         self.statusBar().showMessage(f"Loaded {seqid}: {L:,} bp", 5000)
+
+    def _enter_reference_mode(self, ann: GA.Annotation | None):
+        """Use row 0 of the current model as the reference for the genome panel."""
+        if not self.model.nrows:
+            return
+        seqid = self.model.rows[0].name
+        self.genome_contig = seqid
+        self.annotation = ann
+        L = self.proj().ref_len
+        self.genome_panel.set_contigs([(seqid, L)], current=seqid)
+        self.genome_panel.set_contig(seqid, L, fetch_seq=lambda s, e: self.ref_ungapped()[s:e])
+        self.genome_panel.region.fetch_var = self._variation
+        self.genome_panel.set_annotation(ann)
+        self.view.feature_provider = self._genome_features
+        self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
+        self.genome_panel.set_window(0, min(L, max(2000, L)))
+        self._grid_scrolled()
+
+    def genome_open_reference(self):
+        if not self._maybe_save():
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Open GenBank reference", self.settings.value("last_genome_dir", self.settings.value("last_dir", "")),
+                                              "GenBank (*.gb *.gbk *.genbank);;All files (*)")
+        if not path:
+            return
+        try:
+            model = mio.load(path, "genbank")
+            ann = GA.load_genbank(path)
+        except Exception as e:
+            QMessageBox.critical(self, "GenBank", str(e)); return
+        model.features = []           # gene view shows these; keep grid overlay via provider
+        model.dirty = False
+        if self.genome:
+            self.genome_close()
+        self._set_model(model)
+        self.settings.setValue("last_genome_dir", os.path.dirname(path))
+        self._enter_reference_mode(ann)
+        self._add_recent(path)
+        self.statusBar().showMessage(f"Reference {model.rows[0].name}: {self.proj().ref_len:,} bp, {ann.count()} features", 6000)
+
+    def genome_add_anchored(self):
+        if not self.model.nrows:
+            QMessageBox.information(self, "Anchor", "Open a reference first."); return
+        path, _ = QFileDialog.getOpenFileName(self, "Add sequences anchored to reference", self.settings.value("last_dir", ""), FILE_FILTER)
+        if not path:
+            return
+        try:
+            new = mio.load(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Open failed", str(e)); return
+        if not new.rows:
+            return
+        prog = QProgressDialog(f"MAFFT --add: anchoring {len(new.rows)} sequence(s)…", None, 0, 0, self)
+        prog.setWindowModality(Qt.WindowModal); prog.show(); QApplication.processEvents()
+        try:
+            rows = EXT.mafft_add(self.model.rows, new.rows, self.settings.value("exe/MAFFT") or None)
+        except Exception as e:
+            prog.close(); QMessageBox.critical(self, "MAFFT", str(e)); return
+        prog.close()
+        self.model.begin_batch("Anchor sequences")
+        for r in rows[self.model.nrows:]:
+            self.model.add_row(r)
+        self.model.end_batch()
+        self.statusBar().showMessage(f"Anchored {len(new.rows)} sequence(s) to {self.model.rows[0].name} (columns preserved)", 6000)
+
+    def _variation(self, s: int, e: int):
+        """Per-reference-position variant frequency across rows 2..N (None if not applicable)."""
+        m = self.model
+        if m.nrows < 2 or e - s > 200_000 or e <= s:
+            return None
+        proj = self.proj()
+        c0, c1 = proj.span_to_cols(s, e)
+        ref = m.rows[0].seq
+        out = [0.0] * (e - s)
+        u = s
+        for c in range(c0, min(c1, len(ref))):
+            rc = ref[c]
+            if rc in "-.~":
+                continue
+            rc = rc.upper()
+            tot = mis = 0
+            for r in m.rows[1:]:
+                ch = r.seq[c].upper() if c < len(r.seq) else ""
+                if ch and ch not in "-.~N":
+                    tot += 1
+                    if ch != rc:
+                        mis += 1
+            if tot:
+                out[u - s] = mis / tot
+            u += 1
+        return out
 
     def genome_load_annotation(self):
         path, _ = QFileDialog.getOpenFileName(self, "Load annotation", self.settings.value("last_genome_dir", ""),
@@ -1060,13 +1171,7 @@ class MainWindow(QMainWindow):
         prog.close()
         self.annotation = ann
         if not self.genome and self.model.nrows:
-            # no genome open: treat the current first row as the reference
-            self.genome_contig = self.model.rows[0].name
-            self.genome_panel.set_contigs([(self.model.rows[0].name, len(self.model.rows[0].seq))], current=self.model.rows[0].name)
-            self.genome_panel.set_contig(self.model.rows[0].name, len(self.model.rows[0].seq),
-                                         fetch_seq=lambda s, e: self.model.rows[0].seq[s:e])
-            self.view.feature_provider = self._genome_features
-            self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
+            self._enter_reference_mode(ann)
         self.genome_panel.set_annotation(ann)
         n_here = len(ann.genes_by_seq.get(self.genome_contig or "", []))
         if ann.count() and n_here == 0:
@@ -1106,40 +1211,47 @@ class MainWindow(QMainWindow):
         if not self.genome_panel.isVisible():
             return
         hs = self.view.horizontalScrollBar()
-        s = hs.value(); e = s + self.view._visible_cols()
-        self.genome_panel.set_focus(s, e)
-        self.genome_panel.ensure_window_contains(s, e)
+        c0 = hs.value(); c1 = c0 + self.view._visible_cols()
+        proj = self.proj()
+        s, e = proj.col_to_ref(c0), proj.col_to_ref(c1)
+        self.genome_panel.set_focus(s, max(e, s + 1))
+        self.genome_panel.ensure_window_contains(s, max(e, s + 1))
 
     def _genome_focus(self, s: int, e: int):
-        """Scroll/center the grid on [s,e)."""
+        """Scroll/center the grid on reference span [s,e)."""
+        proj = self.proj()
+        c0, c1 = proj.span_to_cols(s, max(e, s))
         vis = self.view._visible_cols()
-        if e - s < vis:
-            start = max(0, (s + e) // 2 - vis // 2)
-        else:
-            start = s
+        start = max(0, (c0 + c1) // 2 - vis // 2) if c1 - c0 < vis else c0
         self.view.horizontalScrollBar().setValue(start)
         if self.model.nrows:
-            self.view.set_cursor(0, s)
+            self.view.set_cursor(0, c0)
             self.view.horizontalScrollBar().setValue(start)
 
     def _genome_features(self, row: int, c0: int, c1: int):
         """Feature provider for the grid: gene models of the genome row as CDS/exon features."""
         if row != 0 or not self.annotation or not self.genome_contig:
             return []
+        proj = self.proj()
+        u0, u1 = proj.col_to_ref(c0), proj.col_to_ref(c1) + 1
+        def P(a, b):
+            return proj.span_to_cols(a, b) if not proj.identity else (a, b)
         out = []
-        for g in self.annotation.overlapping(self.genome_contig, c0, c1):
+        for g in self.annotation.overlapping(self.genome_contig, u0, u1):
             t = max(g.transcripts, key=lambda t: (len(t.cds), t.end - t.start)) if g.transcripts else None
             if t is None:
                 continue
             col = "#1f5fbf" if g.strand > 0 else "#c0392b"
             segs = [(a, b, "CDS") for a, b in t.cds] or [(a, b, "exon") for a, b in t.exons]
             for a, b, kind in segs:
-                if b > c0 and a < c1:
-                    out.append(Feature(0, a, b, g.strand, kind, f"{g.name} {kind}", col))
+                if b > u0 and a < u1:
+                    ca, cb = P(a, b)
+                    out.append(Feature(0, ca, cb, g.strand, kind, f"{g.name} {kind}", col))
             if t.cds:
                 for a, b in t.utrs():
-                    if b > c0 and a < c1:
-                        out.append(Feature(0, a, b, g.strand, "UTR", f"{g.name} UTR", "#9aa8c7" if g.strand > 0 else "#d9a59c"))
+                    if b > u0 and a < u1:
+                        ca, cb = P(a, b)
+                        out.append(Feature(0, ca, cb, g.strand, "UTR", f"{g.name} UTR", "#9aa8c7" if g.strand > 0 else "#d9a59c"))
         return out
 
     def _region_features(self, seqid: str, s: int, e: int) -> list:
@@ -1163,7 +1275,8 @@ class MainWindow(QMainWindow):
         if not self.model.nrows:
             return
         seqid = self.genome_contig or self.model.rows[0].name
-        seq = self.model.rows[0].seq[s:e]
+        c0, c1 = self.proj().span_to_cols(s, e)
+        seq = self.model.rows[0].seq[c0:c1]
         m = AlignmentModel([SequenceRow(f"{seqid}:{s + 1}-{e}", seq)], "dna")
         m.features = self._region_features(seqid, s, e)
         m.dirty = False
@@ -1172,7 +1285,7 @@ class MainWindow(QMainWindow):
 
     def _genome_open_gene(self, gene):
         pad = 500
-        self._genome_open_region(max(0, gene.start - pad), min(len(self.model.rows[0].seq), gene.end + pad))
+        self._genome_open_region(max(0, gene.start - pad), min(self.proj().ref_len, gene.end + pad))
 
     # ------------------------------------------------------------ help
     def shortcuts(self):

@@ -305,12 +305,16 @@ def load_annotation(path: str, only_seqid: str | None = None) -> Annotation:
 
 
 def load_genbank(path: str) -> Annotation:
+    """GenBank features -> genes. A bare `gene` feature is merged with the typed
+    feature (CDS/tRNA/rRNA/…) that covers the same locus, so each gene appears once."""
     from Bio import SeqIO
     ann = Annotation(); ann.source = path
     with _open(path) as fh:
         for rec in SeqIO.parse(fh, "genbank"):
+            typed: list[Gene] = []
+            plain: list[Gene] = []
             for k, f in enumerate(rec.features):
-                if f.type not in ("gene", "CDS", "rRNA", "tRNA", "ncRNA", "mRNA", "misc_feature"):
+                if f.type not in ("gene", "CDS", "rRNA", "tRNA", "ncRNA", "mRNA", "misc_feature", "D-loop"):
                     continue
                 name = f.qualifiers.get("gene", f.qualifiers.get("product", f.qualifiers.get("locus_tag", [f.type])))[0]
                 s, e = int(f.location.start), int(f.location.end)
@@ -321,7 +325,13 @@ def load_genbank(path: str) -> Annotation:
                     t.cds = list(t.exons)
                 g = Gene(f"{name}.{k}", name, rec.id, s, e, st, f.type, [t],
                          attrs={q: v[0] for q, v in f.qualifiers.items() if q in ("product", "note")})
+                (plain if f.type == "gene" else typed).append(g)
+            # keep typed features; add a plain gene only when no typed feature covers it
+            for g in typed:
                 ann.add_gene(g)
+            for g in plain:
+                if not any(t.name == g.name and t.start < g.end and t.end > g.start for t in typed):
+                    ann.add_gene(g)
     ann.finalize()
     return ann
 

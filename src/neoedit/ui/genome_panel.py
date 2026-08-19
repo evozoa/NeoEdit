@@ -168,6 +168,7 @@ class RegionView(QWidget):
         self.seqid = ""
         self.synteny: list[SyntenyBlock] = []
         self.fetch_seq = None               # callable(start,end)->str for base-level drawing
+        self.fetch_var = None               # callable(start,end)->list[float] per-ref-position variant freq (or None)
         self.expanded = False               # show all transcripts
         self.setMinimumHeight(150)
         self.setMouseTracking(True)
@@ -237,6 +238,24 @@ class RegionView(QWidget):
         elif self.fetch_seq and bpp <= 1:
             # GC-ish density strip? keep simple: thin line indicating sequence present
             p.fillRect(QRectF(left, y + 3, right - left, 3), QColor("#ddd")); y += 10
+
+        # variation track (population alignment in the grid)
+        if self.fetch_var is not None:
+            var = self.fetch_var(s, e)
+            if var:
+                base_y = y + 14
+                p.setPen(QColor("#666")); p.drawText(QPointF(2, base_y - 2), "var")
+                p.setPen(Qt.NoPen)
+                n = len(var)
+                for i, v in enumerate(var):
+                    if v <= 0:
+                        continue
+                    x = self._x(s + i)
+                    h = 3 + 9 * min(1.0, v)
+                    col = QColor("#d97706") if v < 0.5 else QColor("#dc2626")
+                    p.fillRect(QRectF(x, base_y - h, max(1.0, 1 / max(1e-9, self.bp_per_px())), h), col)
+                p.setPen(QColor("#bbb")); p.drawLine(QPointF(left, base_y), QPointF(right, base_y))
+                y = base_y + 2
 
         # gene lanes
         genes = self.ann.overlapping(self.seqid, s, e) if (self.ann and self.seqid) else []
