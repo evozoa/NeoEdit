@@ -503,15 +503,6 @@ class AlignmentView(QAbstractScrollArea):
                     p.drawLine(xe - 4, y + self.cell_h - 5, xe, y + self.cell_h - 1)
                 else:
                     p.drawLine(xs + 4, y + self.cell_h - 5, xs, y + self.cell_h - 1)
-        # --- selection outline
-        if sel and not self.sel_rows:
-            sr0, sr1, sc0, sc1 = sel
-            x0 = grid_left + (sc0 - hs) * self.cell_w
-            x1 = grid_left + (sc1 + 1 - hs) * self.cell_w
-            y0 = self.header_h + (sr0 - vs) * self.row_h
-            y1 = self.header_h + (sr1 + 1 - vs) * self.row_h
-            p.setPen(QPen(pal.color(QPalette.Highlight), 2))
-            p.drawRect(QRect(QPoint(max(grid_left, x0), max(self.header_h, y0)), QPoint(min(W, x1) - 1, min(H, y1) - 1)))
         # --- cursor
         if m.nrows and r0 <= self.cur_row < r1 and c0 <= self.cur_col <= c1:
             rc = self.cell_rect(self.cur_row, self.cur_col)
@@ -539,18 +530,28 @@ class AlignmentView(QAbstractScrollArea):
         if self.text_weight == "semibold":
             p.drawText(QPointF(x + (1.0 if self.crisp_text else 0.6), y), ch)
 
+    @staticmethod
+    def _invert(c: QColor) -> QColor:
+        return QColor(255 - c.red(), 255 - c.green(), 255 - c.blue())
+
     def _draw_cell(self, p: QPainter, x, y, ch, bgc, fg, in_sel, selcol=None, force_bg=False):
+        """Paint one cell. Selected cells are drawn with inverted colours (BioEdit-style):
+        a gap becomes a white dash on black; in inverse view G/C/A/T backgrounds become
+        white/yellow/fuchsia/cyan with black letters."""
+        base = self.palette().color(QPalette.Base)
         if bgc and (self.color_target == "background" or force_bg):
-            p.fillRect(x, y, self.cell_w, self.cell_h, QColor(bgc))
-            p.setPen(QColor(C.text_for(bgc)))
+            bg, pen = QColor(bgc), QColor(C.text_for(bgc))
         elif bgc:
-            p.setPen(QColor(bgc))
+            bg, pen = base, QColor(bgc)
         else:
-            p.setPen(fg)
+            bg, pen = base, QColor(fg)
+        if in_sel:
+            bg, pen = self._invert(bg), self._invert(pen)
+        if in_sel or bg != base:
+            p.fillRect(x, y, self.cell_w, self.cell_h, bg)
+        p.setPen(pen)
         if ch:
             self._text(p, x + self._tx, y + self._ty, ch)
-        if in_sel and selcol is not None:
-            p.fillRect(x, y, self.cell_w, self.cell_h, selcol)
 
     # ------------------------------------------------------------ mouse
     def mousePressEvent(self, e: QMouseEvent):
