@@ -102,12 +102,22 @@ class MainWindow(QMainWindow):
         self.a_prefs = A("&Preferences…", self.preferences)
 
         self.mode_group = QActionGroup(self)
-        self.a_mode_select = A("Select / gap-edit mode", lambda: self.view.set_mode("select"), "F5", True)
-        self.a_mode_insert = A("Insert mode", lambda: self.view.set_mode("insert"), "F6", True)
-        self.a_mode_over = A("Overwrite mode", lambda: self.view.set_mode("overwrite"), "F7", True)
-        for a in (self.a_mode_select, self.a_mode_insert, self.a_mode_over):
+        self.a_mode_slide = A("&Select / Slide mode", lambda: self._set_mode("slide"), "F5", True,
+                              "Box-select residues; drag a selection to slide it over gaps (Shift: move whole downstream sequence)")
+        self.a_mode_edit = A("&Edit mode", lambda: self._set_mode("edit"), "F6", True,
+                             "Place the cursor and type residues (Insert / Overwrite)")
+        self.a_mode_grab = A("&Grab && Drag mode", lambda: self._set_mode("grab"), "F7", True,
+                             "Grab a single residue and drag it (Shift: drag everything downstream of it)")
+        for a in (self.a_mode_slide, self.a_mode_edit, self.a_mode_grab):
             self.mode_group.addAction(a)
-        self.a_mode_select.setChecked(True)
+        self.a_mode_slide.setChecked(True)
+        self.sub_group = QActionGroup(self)
+        self.a_mode_insert = A("&Insert", lambda: self.view.set_edit_submode("insert"), None, True, "Typing inserts residues (Edit mode)")
+        self.a_mode_over = A("&Overwrite", lambda: self.view.set_edit_submode("overwrite"), None, True, "Typing overwrites residues (Edit mode)")
+        self.sub_group.addAction(self.a_mode_insert); self.sub_group.addAction(self.a_mode_over)
+        self.a_mode_insert.setChecked(True)
+        self.a_downstream = A("Sliding moves &downstream sequence by default", self._toggle_downstream, None, True,
+                              "When on, sliding/grabbing moves the entire sequence downstream (Shift reverses); when off, gaps are crunched/opened (Shift reverses)")
 
         self.a_zoom_in = A("Zoom &in", lambda: self.view.zoom(1), "Ctrl+=")
         self.a_zoom_out = A("Zoom &out", lambda: self.view.zoom(-1), "Ctrl+-")
@@ -190,8 +200,8 @@ class MainWindow(QMainWindow):
         self.a_about = A("&About", self.about)
 
         for name, act in (("open", self.a_open), ("save", self.a_save), ("undo", self.a_undo), ("redo", self.a_redo),
-                          ("mode_select", self.a_mode_select), ("mode_insert", self.a_mode_insert),
-                          ("mode_overwrite", self.a_mode_over), ("zoom_in", self.a_zoom_in), ("zoom_out", self.a_zoom_out),
+                          ("mode_slide", self.a_mode_slide), ("mode_edit", self.a_mode_edit), ("mode_grab", self.a_mode_grab),
+                          ("mode_insert", self.a_mode_insert), ("mode_overwrite", self.a_mode_over), ("downstream", self.a_downstream), ("zoom_in", self.a_zoom_in), ("zoom_out", self.a_zoom_out),
                           ("translation", self.a_translation), ("orf", self.a_orf), ("primer", self.a_primer),
                           ("align", self.a_align), ("features", self.a_dock),
                           ("row_more", self.a_row_more), ("row_less", self.a_row_less),
@@ -214,7 +224,7 @@ class MainWindow(QMainWindow):
         e = mb.addMenu("&Edit")
         for a in (self.a_undo, self.a_redo, None, self.a_copy, self.a_copy_raw, self.a_paste, self.a_selall, None,
                   self.a_find, self.a_findnext, self.a_goto, None,
-                  self.a_mode_select, self.a_mode_insert, self.a_mode_over, None, self.a_prefs):
+                  self.a_mode_slide, self.a_mode_edit, self.a_mode_grab, self.a_mode_insert, self.a_mode_over, self.a_downstream, None, self.a_prefs):
             e.addAction(a) if a else e.addSeparator()
 
         v = mb.addMenu("&View")
@@ -277,6 +287,19 @@ class MainWindow(QMainWindow):
             self.rc_combo.blockSignals(False)
         self._update_status()
 
+    def _set_mode(self, mode):
+        self.view.set_mode(mode)
+        {"slide": self.a_mode_slide, "edit": self.a_mode_edit, "grab": self.a_mode_grab}[mode].setChecked(True)
+        edit = mode == "edit"
+        self.a_mode_insert.setVisible(edit); self.a_mode_over.setVisible(edit)
+        self.settings.setValue("mode", mode)
+        self._update_status()
+
+    def _toggle_downstream(self, on):
+        self.view.slide_downstream_default = on
+        self.settings.setValue("slide_downstream", on)
+        self._update_status()
+
     def _context_menu(self, pos):
         m = QMenu(self)
         for a in (self.a_copy, self.a_paste, None, self.a_revcomp, self.a_translate, self.a_rmgaps, None,
@@ -301,7 +324,7 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(tb)
         for a in (self.a_open, self.a_save, None, self.a_undo, self.a_redo, None,
-                  self.a_mode_select, self.a_mode_insert, self.a_mode_over, None,
+                  self.a_mode_slide, self.a_mode_edit, self.a_mode_grab, self.a_mode_insert, self.a_mode_over, self.a_downstream, None,
                   self.a_normal, self.a_inverse, None,
                   self.a_zoom_in, self.a_zoom_out, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None,
                   self.a_translation, self.a_dock, None, self.a_orf, self.a_primer, self.a_align):
@@ -366,7 +389,7 @@ class MainWindow(QMainWindow):
             self.lbl_sel.setText(f"  sel: rows {s[0] + 1}-{s[1] + 1}, cols {s[2] + 1}-{s[3] + 1} ({s[3] - s[2] + 1})  ")
         else:
             self.lbl_sel.setText("")
-        self.lbl_mode.setText(f"  {v.mode.upper()}  ")
+        self.lbl_mode.setText(f"  {v.mode_text()}  ")
         self.lbl_info.setText(f"{m.nrows} sequences, {m.width} columns, {m.seq_type.upper()}"
                               + (f"  —  {os.path.basename(m.path)}" if m.path else ""))
         self.a_undo.setEnabled(m.can_undo()); self.a_undo.setText(f"&Undo {m.undo_text()}".strip())
@@ -510,6 +533,11 @@ class MainWindow(QMainWindow):
         fam = self.settings.value("font_family")
         if fam:
             self.view.set_font_family(fam)
+        md = self.settings.value("mode", "slide")
+        self._set_mode(md if md in self.view.MODES else "slide")
+        sd = self.settings.value("slide_downstream", False)
+        sd = sd in (True, "true", "True", 1, "1")
+        self.a_downstream.setChecked(sd); self.view.slide_downstream_default = sd
         rck = self.settings.value("right_click_action")
         if rck in dict(self.view.RIGHT_CLICK_ACTIONS):
             self._set_right_click(rck)
@@ -588,9 +616,9 @@ class MainWindow(QMainWindow):
             rows = m.rows
         else:
             seq = re.sub(r"[\s\d]", "", txt)
-            if self.view.mode != "select" and self.model.nrows:
+            if self.view.typing is not None and self.model.nrows:
                 # paste into current row at cursor
-                if self.view.mode == "insert":
+                if self.view.typing == "insert":
                     self.model.insert_text(self.view.cur_row, self.view.cur_col, seq)
                 else:
                     self.model.overwrite(self.view.cur_row, self.view.cur_col, seq)
@@ -902,8 +930,13 @@ Gap editing (any mode)
                          unselected sequences - choose under Edit > Right-click action
   Shift+right-click      context menu
 
-Modes (F5 select, F6 insert, F7 overwrite)
-  In insert/overwrite mode, typed letters edit residues; Delete removes residues.
+Modes (BioEdit-style; F5 / F6 / F7)
+  Select / Slide   box-select; drag the selection to slide it over gaps (crunch ahead, open behind);
+                   hold Shift to move the entire sequence downstream instead. The toolbar
+                   "downstream" toggle swaps which of these is the default.
+  Edit             place the cursor and type; Insert / Overwrite choice appears on the toolbar
+                   (Insert key toggles); Delete/Backspace remove residues.
+  Grab & Drag      press on a single residue and drag it; Shift drags everything downstream of it.
 
 Selection
   Click & drag in the grid  rectangular block;  click a name  whole row (Ctrl/Shift to extend)

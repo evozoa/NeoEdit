@@ -163,7 +163,46 @@ def _spacing(kind: str):
     p.end(); return pm
 
 
+def _slide():
+    pm, p = _pix()
+    p.setPen(QPen(QColor("#555"), 1, Qt.DashLine)); p.setBrush(QColor(60, 120, 215, 60)); p.drawRect(4, 7, 14, 8)
+    p.setPen(QPen(QColor("#222"), 2)); p.drawLine(2, 11, 20, 11)
+    p.drawLine(2, 11, 5, 8); p.drawLine(2, 11, 5, 14); p.drawLine(20, 11, 17, 8); p.drawLine(20, 11, 17, 14)
+    p.end(); return pm
+
+
+def _edit_mode():
+    pm, p = _pix()
+    p.setPen(QPen(QColor("#222"), 2))
+    p.drawLine(11, 4, 11, 18); p.drawLine(8, 4, 14, 4); p.drawLine(8, 18, 14, 18)
+    p.setPen(QColor("#c02020")); p.setFont(_font(7)); p.drawText(QRect(12, 6, 10, 10), Qt.AlignCenter, "A")
+    p.end(); return pm
+
+
+def _grab():
+    pm, p = _pix()
+    p.setPen(QPen(QColor("#222"), 1.2)); p.setBrush(QColor("#fff"))
+    # simple hand: palm + 4 fingers + thumb
+    p.drawRoundedRect(6, 10, 10, 9, 3, 3)
+    for x in (6.5, 9, 11.5, 14):
+        p.drawRoundedRect(QRectF(x, 4, 2.2, 8), 1, 1)
+    p.drawRoundedRect(QRectF(3, 10, 4, 2.4), 1, 1)
+    p.end(); return pm
+
+
+def _downstream():
+    pm, p = _pix()
+    p.setPen(QPen(QColor("#008000"), 2)); p.drawLine(4, 6, 4, 16)
+    p.setPen(QPen(QColor("#222"), 2)); p.drawLine(6, 11, 19, 11); p.drawLine(19, 11, 15, 7); p.drawLine(19, 11, 15, 15)
+    p.setPen(QPen(QColor("#222"), 1.2)); p.drawLine(8, 16, 18, 16); p.drawLine(8, 6, 18, 6)
+    p.end(); return pm
+
+
 _BUILDERS = {
+    "mode_slide": _slide,
+    "mode_edit": _edit_mode,
+    "mode_grab": _grab,
+    "downstream": _downstream,
     "normal_view": lambda: _letters_square(False),
     "inverse_view": lambda: _letters_square(True),
     "mode_select": _pointer,

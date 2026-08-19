@@ -349,6 +349,35 @@ class AlignmentModel:
         self._record("Move block", idx, fn)
         return True
 
+    def move_downstream(self, rows: Iterable[int], col: int, delta: int) -> bool:
+        """Shift everything from `col` to the end of the sequence by delta columns
+        (BioEdit "move entire sequence downstream"): delta>0 inserts gaps at col,
+        delta<0 removes gaps immediately before col (only if they are all gaps)."""
+        idx = list(rows)
+        if delta == 0:
+            return True
+        if delta > 0:
+            def fn():
+                for i in idx:
+                    r = self.rows[i]
+                    s = self._pad(r.seq, col)
+                    r.seq = s[:col] + GAP * delta + s[col:]
+            self._record("Move downstream", idx, fn)
+            return True
+        d = -delta
+        if col - d < 0:
+            return False
+        for i in idx:
+            s = self.rows[i].seq
+            if any(c not in GAP_CHARS for c in s[col - d:col]):
+                return False
+        def fn():
+            for i in idx:
+                r = self.rows[i]
+                r.seq = r.seq[:col - d] + r.seq[col:]
+        self._record("Move downstream", idx, fn)
+        return True
+
     # ----------------------------------------------------- sequence ops
     def _transform(self, rows: Iterable[int], fn_seq: Callable[[str], str], desc: str):
         idx = list(rows)

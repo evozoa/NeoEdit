@@ -34,7 +34,8 @@ class AlignmentView(QAbstractScrollArea):
     featureActivated = Signal(object)         # Feature
     contextMenuWanted = Signal(QPoint)        # viewport position
 
-    MODES = ("select", "insert", "overwrite")
+    MODES = ("slide", "edit", "grab")          # BioEdit: Select/Slide, Edit, Grab & Drag
+    MODE_LABELS = {"slide": "Select / Slide", "edit": "Edit", "grab": "Grab & Drag"}
     # BioEdit-style right-click behaviours
     RIGHT_CLICK_ACTIONS = (
         ("ins_sel", "Insert gap in selected sequence"),
@@ -69,7 +70,9 @@ class AlignmentView(QAbstractScrollArea):
         self.cur_col = 0
         self.anchor = None            # (row, col) selection anchor or None
         self.sel_rows: set[int] = set()   # whole-row selection (name click)
-        self.mode = "select"
+        self.mode = "slide"
+        self.edit_submode = "insert"       # insert | overwrite (Edit mode only)
+        self.slide_downstream_default = False   # BioEdit toggle: sliding moves whole downstream sequence by default
         self.right_click_action = "ins_sel"
 
         self.scheme_name = None
@@ -86,7 +89,7 @@ class AlignmentView(QAbstractScrollArea):
         self.show_features = True
         self.shade_threshold = 0.5
         self._consensus_cache = None
-        self._drag_block = None       # (rows, start, end, last_col)
+        self._drag_block = None       # (rows, start, end, last_col, kind)  kind: "crunch" | "downstream"
         self._dragging_sel = False
         self._press_pos = None
 
@@ -338,6 +341,28 @@ class AlignmentView(QAbstractScrollArea):
         self.modeChanged.emit(mode)
         self.viewport().update()
 
+    def set_edit_submode(self, sub: str):
+        self.edit_submode = sub
+        self.modeChanged.emit(self.mode)
+        self.viewport().update()
+
+    @property
+    def typing(self) -> str | None:
+        """'insert' / 'overwrite' when typing edits residues (Edit mode), else None."""
+        return self.edit_submode if self.mode == "edit" else None
+
+    def mode_text(self) -> str:
+        t = self.MODE_LABELS[self.mode]
+        if self.mode == "edit":
+            t += f" ({self.edit_submode})"
+        return t
+
+    def _begin_drag(self, rows, start, end, col, shift):
+        downstream = shift != self.slide_downstream_default   # shift reverses the default
+        self._drag_block = (rows, start, end, col, "downstream" if downstream else "crunch")
+        self.model.begin_batch("Move downstream" if downstream else "Slide block")
+        self.viewport().setCursor(Qt.ClosedHandCursor)
+
     # ------------------------------------------------------------ consensus
     def consensus_at(self, c: int) -> str:
         """Consensus residue for one column, lazily cached (cache cleared on any edit)."""
@@ -490,9 +515,9 @@ class AlignmentView(QAbstractScrollArea):
         # --- cursor
         if m.nrows and r0 <= self.cur_row < r1 and c0 <= self.cur_col <= c1:
             rc = self.cell_rect(self.cur_row, self.cur_col)
-            pen = QPen(QColor("#ff3030") if self.mode != "select" else pal.color(QPalette.Highlight), 2)
+            pen = QPen(QColor("#ff3030") if self.mode == "edit" else pal.color(QPalette.Highlight), 2)
             p.setPen(pen)
-            if self.mode == "insert":
+            if self.typing == "insert":
                 p.drawLine(rc.left(), rc.top(), rc.left(), rc.bottom())
             else:
                 p.drawRect(rc.adjusted(0, 0, -1, -1))
@@ -560,15 +585,23 @@ class AlignmentView(QAbstractScrollArea):
             return
         if row >= self.model.nrows:
             return
+        shift = bool(e.modifiers() & Qt.ShiftModifier)
         sel = self.selection()
         inside = sel and not self.sel_rows and sel[0] <= row <= sel[1] and sel[2] <= col <= sel[3]
-        if inside and not (e.modifiers() & Qt.ShiftModifier):
-            # begin block drag (slide residues)
-            self._drag_block = (list(range(sel[0], sel[1] + 1)), sel[2], sel[3] + 1, col)
-            self.model.begin_batch("Move block")
-            self.viewport().setCursor(Qt.ClosedHandCursor)
+        if self.mode == "slide" and inside:
+            # drag the selected block (Shift: move whole downstream sequence instead of crunching gaps)
+            self._begin_drag(list(range(sel[0], sel[1] + 1)), sel[2], sel[3] + 1, col, shift)
             return
-        self.set_cursor(row, col, extend=bool(e.modifiers() & Qt.ShiftModifier))
+        if self.mode == "grab":
+            seq = self.model.rows[row].seq
+            if col < len(seq) and seq[col] not in GAPSET:
+                # grab a single residue and drag it (Shift: everything downstream of it)
+                self.anchor = None; self.sel_rows.clear()
+                self.cur_row, self.cur_col = row, col
+                self._begin_drag([row], col, col + 1, col, shift)
+                return
+        # selection / cursor placement (extend with Shift only when not dragging blocks)
+        self.set_cursor(row, col, extend=shift and self.mode != "grab")
         self._dragging_sel = True
 
     def _right_click(self, pos, mods):
@@ -606,15 +639,24 @@ class AlignmentView(QAbstractScrollArea):
         pos = e.position().toPoint()
         row, col = self.cell_at(pos)
         if self._drag_block is not None and e.buttons() & Qt.LeftButton:
-            rows, start, end, last = self._drag_block
+            rows, start, end, last, kind = self._drag_block
             delta = col - last
             if delta:
-                if self.model.block_shift(rows, start, end, delta):
+                ok = (self.model.move_downstream(rows, start, delta) if kind == "downstream"
+                      else self.model.block_shift(rows, start, end, delta))
+                if ok:
                     start += delta; end += delta
-                    self.anchor = (rows[0], start)
-                    self.cur_row, self.cur_col = rows[-1], end - 1
-                    self._drag_block = (rows, start, end, col)
+                    if self.mode == "grab" and end - start == 1:
+                        self.anchor = None
+                        self.cur_row, self.cur_col = rows[0], start
+                        self.cursorChanged.emit(self.cur_row, self.cur_col)
+                    else:
+                        self.anchor = (rows[0], start)
+                        self.cur_row, self.cur_col = rows[-1], end - 1
+                    self._drag_block = (rows, start, end, col, kind)
+                    self.ensure_visible(self.cur_row, col)
                     self.selectionChanged.emit()
+                    self.viewport().update()
             return
         if self._dragging_sel and e.buttons() & Qt.LeftButton:
             if row < 0:
@@ -712,7 +754,7 @@ class AlignmentView(QAbstractScrollArea):
         if k == Qt.Key_Escape:
             self.clear_selection(); return
 
-        if k in (Qt.Key_Space, Qt.Key_Minus) or (k == Qt.Key_Period and self.mode == "select"):
+        if k in (Qt.Key_Space, Qt.Key_Minus) or (k == Qt.Key_Period and self.typing is None):
             # insert gap(s) at cursor; Ctrl -> whole column in all rows; in selection -> all selected rows
             if ctrl:
                 m.insert_gap_columns(c, 1)
@@ -741,7 +783,7 @@ class AlignmentView(QAbstractScrollArea):
                         break
                 m.end_batch()
                 self.clear_selection()
-            elif self.mode == "select":
+            elif self.typing is None:
                 if not m.delete_gaps(r, c, 1):
                     QApplication.beep()
             else:
@@ -758,7 +800,7 @@ class AlignmentView(QAbstractScrollArea):
                 if m.delete_gap_columns(sel[2] - 1 if not self.sel_rows else c - 1, 1, rows):
                     self.anchor = (sel[0], sel[2] - 1)
                     self.set_cursor(sel[1], sel[3] - 1, extend=True)
-            elif self.mode == "select":
+            elif self.typing is None:
                 if m.delete_gaps(r, c - 1, 1):
                     self.set_cursor(r, c - 1)
                 else:
@@ -768,15 +810,18 @@ class AlignmentView(QAbstractScrollArea):
                 self.set_cursor(r, c - 1)
             return
         txt = e.text()
-        if txt and txt.isprintable() and not ctrl and self.mode != "select":
+        if k == Qt.Key_Insert and self.mode == "edit":
+            self.set_edit_submode("overwrite" if self.edit_submode == "insert" else "insert")
+            return
+        if txt and txt.isprintable() and not ctrl and self.typing is not None:
             ch = txt.upper() if not shift else txt
-            if self.mode == "overwrite":
+            if self.typing == "overwrite":
                 m.overwrite(r, c, ch)
             else:
                 m.insert_text(r, c, ch)
             self.set_cursor(r, c + 1)
             return
-        if txt and txt.isalpha() and self.mode == "select" and not ctrl:
+        if txt and txt.isalpha() and self.typing is None and not ctrl:
             # typing in select mode: jump to next occurrence? keep BioEdit-like: beep
             QApplication.beep()
             return

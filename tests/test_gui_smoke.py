@@ -35,12 +35,12 @@ def test_main_window_flow(app, tmp_path):
     w.undo()
     assert w.model.rows[0].seq[5] != "-"
     # insert mode typing
-    v.set_mode("insert")
+    v.set_mode("edit"); v.set_edit_submode("insert")
     v.set_cursor(0, 5)
     QTest.keyClick(v, Qt.Key_N)
     assert w.model.rows[0].seq[5] == "N"
     w.undo()
-    v.set_mode("select")
+    v.set_mode("slide")
     # selection + column gap
     v.select_region(0, 4, 10, 12)
     QTest.keyClick(v, Qt.Key_Space)
@@ -117,3 +117,46 @@ def test_right_click_actions(app):
     assert [r.seq for r in w.model.rows] == before
     w.model.dirty = False
     w.close()
+
+
+def test_modes_slide_grab_downstream(app):
+    from neoedit.ui.main_window import MainWindow
+    from neoedit.model import AlignmentModel, SequenceRow
+    w = MainWindow(); w.show()
+    w._set_model(AlignmentModel([SequenceRow("a", "AC--GTAC"), SequenceRow("b", "ACGTGTAC")]))
+    v = w.view; v.resize(800, 300)
+    # --- Select/Slide: select AC in row 0 and drag right by 1 -> crunch gap ahead, open behind
+    v.select_region(0, 0, 0, 1)
+    start = v.cell_rect(0, 1).center()
+    QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, start)
+    QTest.mouseMove(v.viewport(), v.cell_rect(0, 2).center())
+    QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.cell_rect(0, 2).center())
+    assert w.model.rows[0].seq == "-AC-GTAC"
+    w.undo(); assert w.model.rows[0].seq == "AC--GTAC"
+    # --- Shift+drag = move whole downstream sequence (inserts gap at selection start)
+    v.select_region(0, 0, 0, 1)
+    QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.ShiftModifier, v.cell_rect(0, 1).center())
+    QTest.mouseMove(v.viewport(), v.cell_rect(0, 2).center())
+    QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.ShiftModifier, v.cell_rect(0, 2).center())
+    assert w.model.rows[0].seq == "-AC--GTAC"
+    w.undo()
+    # --- Grab & Drag: grab the G (col 4) in row 0 and drag left by 2 over the gaps
+    w._set_mode("grab")
+    QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.cell_rect(0, 4).center())
+    QTest.mouseMove(v.viewport(), v.cell_rect(0, 2).center())
+    QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.cell_rect(0, 2).center())
+    assert w.model.rows[0].seq == "ACG--TAC"
+    w.undo()
+    # grabbing a gap does nothing but start a selection
+    QTest.mouseClick(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.cell_rect(0, 2).center())
+    assert w.model.rows[0].seq == "AC--GTAC"
+    # --- Edit mode hides/shows insert/overwrite and Insert key toggles
+    w._set_mode("edit")
+    assert w.a_mode_insert.isVisible()
+    QTest.keyClick(v, Qt.Key_Insert)
+    assert v.edit_submode == "overwrite"
+    w._set_mode("slide")
+    assert not w.a_mode_insert.isVisible()
+    # model-level downstream left move fails if non-gaps precede
+    assert not w.model.move_downstream([1], 2, -1)
+    w.model.dirty = False; w.close()
