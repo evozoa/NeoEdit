@@ -7,7 +7,7 @@ from PySide6.QtGui import QImage, QPainter, QFont, QColor, QPen, QPainterPath
 from PySide6.QtCore import Qt, QRectF
 
 NT = {"A": "#008000", "C": "#0000ff", "G": "#000000", "T": "#ff0000"}
-NCOL = "#aa00aa"                     # BioEdit's colour for the degenerate base N
+NCOL = "#aa00aa"                     # BioEdit's color for the degenerate base N
 LETTERS = ["ATGC", "GCCT", "TAGC", "CCTA"]   # filler letters (cells not in the N)
 NMASK = {(r, 0) for r in range(4)} | {(r, 3) for r in range(4)} | {(1, 1), (2, 2)}
 OUT = os.path.join(os.path.dirname(__file__), "..", "src", "neoedit", "resources", "icons")

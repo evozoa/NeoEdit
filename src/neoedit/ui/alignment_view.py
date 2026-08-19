@@ -78,7 +78,7 @@ class AlignmentView(QAbstractScrollArea):
         self.scheme_name = None
         self.scheme = {}
         self.color_mode = "scheme"    # scheme | identity | none
-        self.color_target = "text"    # "text" = BioEdit normal view (coloured letters); "background" = inverse view
+        self.color_target = "text"    # "text" = BioEdit normal view (colored letters); "background" = inverse view
         self.identity_ref = "consensus"   # consensus | first
         self.identity_color = "#000000"   # BioEdit shades identities black (white letters)
         self.dots_for_identity = False
@@ -535,7 +535,7 @@ class AlignmentView(QAbstractScrollArea):
         return QColor(255 - c.red(), 255 - c.green(), 255 - c.blue())
 
     def _draw_cell(self, p: QPainter, x, y, ch, bgc, fg, in_sel, selcol=None, force_bg=False):
-        """Paint one cell. Selected cells are drawn with inverted colours (BioEdit-style):
+        """Paint one cell. Selected cells are drawn with inverted colors (BioEdit-style):
         a gap becomes a white dash on black; in inverse view G/C/A/T backgrounds become
         white/yellow/fuchsia/cyan with black letters."""
         base = self.palette().color(QPalette.Base)

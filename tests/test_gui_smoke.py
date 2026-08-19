@@ -47,7 +47,7 @@ def test_main_window_flow(app, tmp_path):
     assert all(r.seq[10] == "-" for r in w.model.rows)
     QTest.keyClick(v, Qt.Key_Backspace)  # removes the gap column again
     assert all(r.seq[10] != "-" for r in w.model.rows)
-    # toggle translation overlay & colour modes; repaint
+    # toggle translation overlay & color modes; repaint
     w.a_translation.trigger(); v.viewport().repaint()
     w._set_color_mode("identity"); v.viewport().repaint()
     w.a_dots.trigger(); v.viewport().repaint()

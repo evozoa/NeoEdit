@@ -1,7 +1,7 @@
-"""Residue colour schemes.
+"""Residue color schemes.
 
-Each scheme maps an uppercase residue char to a hex colour; None means "no
-colour". The default schemes are BioEdit's own colour tables (parsed from the
+Each scheme maps an uppercase residue char to a hex color; None means "no
+color". The default schemes are BioEdit's own color tables (parsed from the
 `color.tab` files shipped with BioEdit, see resources/bioedit_tables/).
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ _TABLE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources
 
 
 def _bgr_to_hex(v: int) -> str:
-    """BioEdit stores colours as a 3-byte integer in BGR order (Windows COLORREF)."""
+    """BioEdit stores colors as a 3-byte integer in BGR order (Windows COLORREF)."""
     v = int(v)
     if v < 0:
         v &= 0xFFFFFF
@@ -22,7 +22,7 @@ def _bgr_to_hex(v: int) -> str:
 
 
 def parse_bioedit_table(text: str) -> dict[str, dict[str, str]]:
-    """Parse a BioEdit .tab colour file -> {"protein": {...}, "dna": {...}}."""
+    """Parse a BioEdit .tab color file -> {"protein": {...}, "dna": {...}}."""
     out = {"protein": {}, "dna": {}}
     cur = None
     lines = [ln.rstrip("\r\n") for ln in text.splitlines()]

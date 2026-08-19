@@ -131,7 +131,7 @@ def _primer():
 
 
 def _align():
-    """MAFFT: bold 'M' above three aligned colour bars (MAFFT has no official logo)."""
+    """MAFFT: bold 'M' above three aligned color bars (MAFFT has no official logo)."""
     pm, p = _pix()
     p.setPen(QColor("#1f3b73")); p.setFont(_font(11, bold=True, family="DejaVu Sans"))
     p.drawText(QRect(0, -1, SZ, 14), Qt.AlignCenter, "M")

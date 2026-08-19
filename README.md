@@ -12,12 +12,12 @@ actually use, on a codebase that can keep evolving:
 * **Alignment editor** – BioEdit-style grid, keyboard gap editing (Space/Delete/
   Backspace), insert/overwrite typing modes, block selection, drag-to-slide
   residues over gaps, column ops, undo/redo, zoom, find (gap-tolerant/regex).
-* **Colouring** – BioEdit's own colour tables are the default (parsed from the
+* **Coloring** – BioEdit's own color tables are the default (parsed from the
   `color.tab` files shipped with BioEdit: A green / C blue / G black / T red and the
   matching amino-acid table), plus BioEdit BLOSUM / PAM250 / Kyte-Doolittle /
   Manuel Ruiz / codon-degeneracy tables and Clustal X / Zappo / Taylor /
-  hydrophobicity. BioEdit "normal" view (coloured letters) by default; Ctrl+I
-  toggles "inverse" view (coloured backgrounds). Shade identities (black, as in
+  hydrophobicity. BioEdit "normal" view (colored letters) by default; Ctrl+I
+  toggles "inverse" view (colored backgrounds). Shade identities (black, as in
   BioEdit) vs consensus or first sequence, identities-as-dots, consensus row with
   adjustable threshold.
 * **Sequence tools** – reverse-complement, complement, reverse, case, DNA↔RNA,
