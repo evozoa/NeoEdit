@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neoedit"
+version = "0.1.0"
+description = "A modern, cross-platform BioEdit-style sequence alignment editor"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "PySide6>=6.6",
+    "biopython>=1.83",
+    "primer3-py>=2.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+neoedit = "neoedit.app:main"
+
+[project.gui-scripts]
+neoedit-gui = "neoedit.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

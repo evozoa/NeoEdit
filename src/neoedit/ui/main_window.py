@@ -1,0 +1,922 @@
+from __future__ import annotations
+
+import os
+import sys
+import traceback
+
+from PySide6.QtCore import Qt, QSettings, QSize
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QIcon
+from PySide6.QtWidgets import (QMainWindow, QFileDialog, QMessageBox, QLabel, QToolBar, QDockWidget,
+                               QApplication, QInputDialog, QMenu, QTabWidget, QWidget, QVBoxLayout, QComboBox,
+                               QSpinBox, QProgressDialog)
+
+from ..model import AlignmentModel, SequenceRow, Feature
+from ..model import io as mio
+from ..model import colors as C
+from ..analysis import translate as T
+from ..analysis import external as EXT
+from .alignment_view import AlignmentView
+from .feature_track import FeaturePanel
+from .icons import icon
+from .dialogs.translate_dialog import TranslateDialog
+from .dialogs.orf_dialog import ORFFinderDialog
+from .dialogs.primer_dialog import PrimerDialog
+from .dialogs.misc_dialogs import (FindDialog, StatsDialog, IdentityDialog, PlotDialog, AlignDialog,
+                                   PreferencesDialog, NewSequenceDialog)
+from .dialogs.common import TextDialog
+from .. import __version__
+
+FILE_FILTER = ";;".join(
+    ["All sequence files (*.fasta *.fas *.fa *.fna *.faa *.aln *.phy *.nex *.nexus *.sto *.gb *.gbk *.embl *.msf *.bio *.txt)"]
+    + [f"{lbl} (" + " ".join("*" + e for e in exts) + ")" for lbl, _, exts, _ in mio.FORMATS]
+    + ["All files (*)"])
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, paths: list[str] | None = None):
+        super().__init__()
+        self.setWindowTitle("NeoEdit")
+        self.resize(1200, 750)
+        self.settings = QSettings("neoedit", os.environ.get("NEOEDIT_SETTINGS", "neoedit"))
+        self.model = AlignmentModel()
+        self.view = AlignmentView(self.model)
+        self.setCentralWidget(self.view)
+        self.find_dlg = None
+        self._children = []  # keep non-modal dialogs alive
+
+        self.features_panel = FeaturePanel(self.model)
+        self.dock = QDockWidget("Features", self)
+        self.dock.setWidget(self.features_panel)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.dock)
+        self.dock.hide()
+        self.features_panel.featureSelected.connect(self._goto_feature)
+        self.features_panel.featuresChanged.connect(self.view.viewport().update)
+
+        self._build_actions()
+        self._build_menus()
+        self._build_toolbar()
+        self._build_status()
+        self.view.cursorChanged.connect(self._update_status)
+        self.view.selectionChanged.connect(self._update_status)
+        self.view.modeChanged.connect(self._update_status)
+        self.view.featureActivated.connect(lambda f: None)
+        self.model.add_listener(self._on_model)
+        self._update_status()
+        self._restore()
+        self.view.trans_table = int(self.settings.value("default_table", 1))
+        if paths:
+            for p in paths:
+                self.open_path(p)
+
+    # ------------------------------------------------------------ actions
+    def _act(self, text, slot, shortcut=None, checkable=False, tip=None):
+        a = QAction(text, self)
+        if shortcut:
+            a.setShortcut(QKeySequence(shortcut))
+        a.setCheckable(checkable)
+        if tip:
+            a.setStatusTip(tip)
+        if slot:
+            a.triggered.connect(slot)
+        return a
+
+    def _build_actions(self):
+        A = self._act
+        self.a_new = A("&New alignment", self.new_alignment, "Ctrl+N")
+        self.a_open = A("&Open…", self.open_file, "Ctrl+O")
+        self.a_import = A("&Import sequences into current…", self.import_file)
+        self.a_save = A("&Save", self.save_file, "Ctrl+S")
+        self.a_saveas = A("Save &As…", self.save_file_as, "Ctrl+Shift+S")
+        self.a_export_sel = A("Export selected sequences…", self.export_selected)
+        self.a_quit = A("&Quit", self.close, "Ctrl+Q")
+
+        self.a_undo = A("&Undo", self.undo, "Ctrl+Z")
+        self.a_redo = A("&Redo", self.redo, "Ctrl+Shift+Z")
+        self.a_copy = A("&Copy (FASTA)", self.copy_sel, "Ctrl+C")
+        self.a_copy_raw = A("Copy sequence text only", self.copy_raw, "Ctrl+Shift+C")
+        self.a_paste = A("&Paste sequences", self.paste_seqs, "Ctrl+V")
+        self.a_selall = A("Select &all", self.view.select_all, "Ctrl+A")
+        self.a_find = A("&Find…", self.find, "Ctrl+F")
+        self.a_findnext = A("Find &next", self.find_next, "F3")
+        self.a_goto = A("&Go to position…", self.goto, "Ctrl+G")
+        self.a_prefs = A("&Preferences…", self.preferences)
+
+        self.mode_group = QActionGroup(self)
+        self.a_mode_select = A("Select / gap-edit mode", lambda: self.view.set_mode("select"), "F5", True)
+        self.a_mode_insert = A("Insert mode", lambda: self.view.set_mode("insert"), "F6", True)
+        self.a_mode_over = A("Overwrite mode", lambda: self.view.set_mode("overwrite"), "F7", True)
+        for a in (self.a_mode_select, self.a_mode_insert, self.a_mode_over):
+            self.mode_group.addAction(a)
+        self.a_mode_select.setChecked(True)
+
+        self.a_zoom_in = A("Zoom &in", lambda: self.view.zoom(1), "Ctrl+=")
+        self.a_zoom_out = A("Zoom &out", lambda: self.view.zoom(-1), "Ctrl+-")
+        self.a_font = A("&Font…", self.choose_font)
+        self.a_crisp = A("&Crisp text (no anti-aliasing)", lambda on: self.view.set_text_style(crisp=on), None, True); self.a_crisp.setChecked(True)
+        self.weight_group = QActionGroup(self)
+        self.a_w_reg = A("Regular", lambda: self.view.set_text_style(weight="regular"), None, True)
+        self.a_w_semi = A("Semi-bold", lambda: self.view.set_text_style(weight="semibold"), None, True)
+        self.a_w_bold = A("Bold", lambda: self.view.set_text_style(weight="bold"), None, True)
+        for a in (self.a_w_reg, self.a_w_semi, self.a_w_bold):
+            self.weight_group.addAction(a)
+        self.a_w_reg.setChecked(True)
+        self.a_row_more = A("Increase &line spacing", lambda: self.view.set_spacing(row_pad=self.view.row_pad + 1), "Ctrl+Shift+Up")
+        self.a_row_less = A("Decrease line spacing", lambda: self.view.set_spacing(row_pad=self.view.row_pad - 1), "Ctrl+Shift+Down")
+        self.a_col_more = A("Increase &character spacing", lambda: self.view.set_spacing(col_pad=self.view.col_pad + 1), "Ctrl+Shift+Right")
+        self.a_col_less = A("Decrease character spacing", lambda: self.view.set_spacing(col_pad=self.view.col_pad - 1), "Ctrl+Shift+Left")
+        self.a_consensus = A("Show &consensus", self._toggle_consensus, None, True); self.a_consensus.setChecked(True)
+        self.a_translation = A("Show &translation under DNA", self._toggle_translation, "Ctrl+T", True)
+        self.a_features = A("Show &features", self._toggle_features, None, True); self.a_features.setChecked(True)
+        self.a_dock = self.dock.toggleViewAction(); self.a_dock.setText("Features &panel")
+        self.a_dots = A("Identities as &dots", self._toggle_dots, None, True)
+        self.view_group = QActionGroup(self)
+        self.a_normal = A("&Normal view (coloured letters)", lambda: self._set_inverse(False), None, True)
+        self.a_inverse = A("In&verse view (coloured backgrounds)", lambda: self._set_inverse(True), "Ctrl+I", True)
+        self.a_normal.setIcon(icon("normal_view")); self.a_inverse.setIcon(icon("inverse_view"))
+        self.view_group.addAction(self.a_normal); self.view_group.addAction(self.a_inverse)
+        self.a_normal.setChecked(True)
+        self.a_toggle_inverse = A("Toggle inverse view", lambda: self._set_inverse(not self.a_inverse.isChecked()), "Ctrl+I")
+        self.a_inverse.setShortcut(QKeySequence())
+        self.color_group = QActionGroup(self)
+        self.a_col_scheme = A("Colour by &scheme", lambda: self._set_color_mode("scheme"), None, True)
+        self.a_col_ident = A("Shade &identities", lambda: self._set_color_mode("identity"), None, True)
+        self.a_col_none = A("&No colour", lambda: self._set_color_mode("none"), None, True)
+        for a in (self.a_col_scheme, self.a_col_ident, self.a_col_none):
+            self.color_group.addAction(a)
+        self.a_col_scheme.setChecked(True)
+        self.ref_group = QActionGroup(self)
+        self.a_ref_cons = A("…relative to consensus", lambda: self._set_ref("consensus"), None, True)
+        self.a_ref_first = A("…relative to first sequence", lambda: self._set_ref("first"), None, True)
+        self.ref_group.addAction(self.a_ref_cons); self.ref_group.addAction(self.a_ref_first)
+        self.a_ref_cons.setChecked(True)
+        self.a_threshold = A("Consensus threshold…", self._set_threshold)
+
+        # sequence ops
+        self.a_revcomp = A("&Reverse complement", lambda: self.model.reverse_complement(self.view.target_rows()), "Ctrl+R")
+        self.a_rev = A("Re&verse", lambda: self.model.reverse(self.view.target_rows()))
+        self.a_comp = A("&Complement", lambda: self.model.complement(self.view.target_rows()))
+        self.a_upper = A("&Uppercase", lambda: self.model.to_upper(self.view.target_rows()))
+        self.a_lower = A("&Lowercase", lambda: self.model.to_lower(self.view.target_rows()))
+        self.a_rmgaps = A("Remove &gaps from sequence(s)", lambda: self.model.remove_gaps(self.view.target_rows()))
+        self.a_rna = A("DNA → RNA", lambda: self.model.dna_to_rna(self.view.target_rows()))
+        self.a_dna = A("RNA → DNA", lambda: self.model.rna_to_dna(self.view.target_rows()))
+        self.a_translate = A("&Translate…", self.translate, "Ctrl+Shift+T")
+        self.a_sixframe = A("Six-frame translation report", self.six_frame)
+        self.a_rename = A("Re&name sequence…", self.rename)
+        self.a_newseq = A("&New sequence…", self.new_sequence, "Ctrl+Shift+N")
+        self.a_delseq = A("&Delete sequence(s)", self.delete_seqs)
+        self.a_dupseq = A("Du&plicate sequence(s)", lambda: self.model.duplicate_rows(self.view.target_rows()))
+        self.a_up = A("Move sequence(s) &up", lambda: self._move(-1), "Ctrl+Up")
+        self.a_down = A("Move sequence(s) &down", lambda: self._move(1), "Ctrl+Down")
+        self.a_settype = A("Set sequence type…", self.set_type)
+        self.a_blast = A("BLAST selected sequence (NCBI web)", self.blast)
+
+        # alignment ops
+        self.a_align = A("&Align with MAFFT / MUSCLE / Clustal Omega…", self.align_external, "Ctrl+M")
+        self.a_rm_gapcols = A("Remove gap-only &columns", self.model_call("remove_gap_only_columns"))
+        self.a_pad = A("&Pad sequences to equal length", self.model_call("pad_to_equal_length"))
+        self.a_insgapcol = A("Insert gap column at cursor", lambda: self.model.insert_gap_columns(self.view.cur_col, 1), "Ctrl+Space")
+        self.a_delgapcol = A("Delete gap column at cursor", lambda: self.model.delete_gap_columns(self.view.cur_col, 1), "Ctrl+Delete")
+        self.a_extract = A("Extract selected columns to new window", self.extract_cols)
+
+        # analysis
+        self.a_orf = A("&ORF finder…", self.orf_finder, "Ctrl+Shift+O")
+        self.a_primer = A("&Primer design…", self.primer_design, "Ctrl+Shift+P")
+        self.a_stats = A("Sequence &statistics", self.stats)
+        self.a_ident = A("&Identity matrix", self.identity)
+        self.a_plot = A("&Conservation / entropy plot", self.plot)
+        self.a_cons_report = A("Consensus sequence report", self.consensus_report)
+
+        self.a_about = A("&About", self.about)
+
+        for name, act in (("open", self.a_open), ("save", self.a_save), ("undo", self.a_undo), ("redo", self.a_redo),
+                          ("mode_select", self.a_mode_select), ("mode_insert", self.a_mode_insert),
+                          ("mode_overwrite", self.a_mode_over), ("zoom_in", self.a_zoom_in), ("zoom_out", self.a_zoom_out),
+                          ("translation", self.a_translation), ("orf", self.a_orf), ("primer", self.a_primer),
+                          ("align", self.a_align), ("features", self.a_dock),
+                          ("row_more", self.a_row_more), ("row_less", self.a_row_less),
+                          ("col_more", self.a_col_more), ("col_less", self.a_col_less)):
+            act.setIcon(icon(name))
+        self.a_toggle_inverse.setShortcutContext(Qt.WindowShortcut)
+        self.addAction(self.a_toggle_inverse)
+
+    def model_call(self, name):
+        return lambda: getattr(self.model, name)()
+
+    def _build_menus(self):
+        mb = self.menuBar()
+        f = mb.addMenu("&File")
+        for a in (self.a_new, self.a_open, self.a_import, None, self.a_save, self.a_saveas, self.a_export_sel, None):
+            f.addAction(a) if a else f.addSeparator()
+        self.recent_menu = f.addMenu("Open &recent")
+        f.addSeparator(); f.addAction(self.a_quit)
+
+        e = mb.addMenu("&Edit")
+        for a in (self.a_undo, self.a_redo, None, self.a_copy, self.a_copy_raw, self.a_paste, self.a_selall, None,
+                  self.a_find, self.a_findnext, self.a_goto, None,
+                  self.a_mode_select, self.a_mode_insert, self.a_mode_over, None, self.a_prefs):
+            e.addAction(a) if a else e.addSeparator()
+
+        v = mb.addMenu("&View")
+        for a in (self.a_zoom_in, self.a_zoom_out, self.a_font, self.a_crisp, None, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None, self.a_consensus, self.a_translation, self.a_features, self.a_dock, None):
+            v.addAction(a) if a else v.addSeparator()
+        wm = v.addMenu("Text &weight")
+        for a in (self.a_w_reg, self.a_w_semi, self.a_w_bold):
+            wm.addAction(a)
+        self.scheme_menu = v.addMenu("Colour &scheme")
+        self.scheme_group = QActionGroup(self)
+        self._rebuild_scheme_menu()
+        for a in (self.a_col_scheme, self.a_col_ident, self.a_col_none, self.a_normal, self.a_inverse, self.a_dots, None, self.a_ref_cons, self.a_ref_first, self.a_threshold):
+            v.addAction(a) if a else v.addSeparator()
+        tm = v.addMenu("Translation overlay")
+        self.frame_actions = QActionGroup(self)
+        for i in range(3):
+            a = self._act(f"Frame +{i + 1}", lambda _, k=i: self._set_frame(k), None, True)
+            self.frame_actions.addAction(a); tm.addAction(a)
+            if i == 0:
+                a.setChecked(True)
+        tm.addAction(self._act("Genetic code for overlay…", self._set_overlay_table))
+
+        s = mb.addMenu("&Sequence")
+        for a in (self.a_newseq, self.a_rename, self.a_delseq, self.a_dupseq, self.a_up, self.a_down, None,
+                  self.a_revcomp, self.a_rev, self.a_comp, self.a_upper, self.a_lower, self.a_rmgaps, self.a_rna, self.a_dna, None,
+                  self.a_translate, self.a_sixframe, None, self.a_settype, self.a_blast):
+            s.addAction(a) if a else s.addSeparator()
+
+        al = mb.addMenu("&Alignment")
+        for a in (self.a_align, None, self.a_insgapcol, self.a_delgapcol, self.a_rm_gapcols, self.a_pad, None, self.a_extract):
+            al.addAction(a) if a else al.addSeparator()
+
+        an = mb.addMenu("A&nalysis")
+        for a in (self.a_orf, self.a_primer, None, self.a_stats, self.a_ident, self.a_plot, self.a_cons_report):
+            an.addAction(a) if a else an.addSeparator()
+
+        h = mb.addMenu("&Help")
+        h.addAction(self._act("Keyboard shortcuts", self.shortcuts))
+        h.addAction(self.a_about)
+
+        # right-click behaviour (BioEdit-style) + context menu
+        rc = e.addMenu("&Right-click action")
+        self.rc_group = QActionGroup(self)
+        self.rc_actions = {}
+        for key, label in self.view.RIGHT_CLICK_ACTIONS:
+            a = self._act(label, lambda _, k=key: self._set_right_click(k), None, True)
+            self.rc_group.addAction(a); rc.addAction(a); self.rc_actions[key] = a
+        self.rc_actions[self.view.right_click_action].setChecked(True)
+        rc.addSeparator()
+        rc.addAction(self._act("(Shift+right-click always shows the context menu)", None))
+        self.view.contextMenuWanted.connect(self._context_menu)
+
+    def _set_right_click(self, key):
+        self.view.right_click_action = key
+        self.settings.setValue("right_click_action", key)
+        self.rc_actions[key].setChecked(True)
+        if hasattr(self, "rc_combo"):
+            self.rc_combo.blockSignals(True)
+            self.rc_combo.setCurrentIndex([k for k, _ in self.view.RIGHT_CLICK_ACTIONS].index(key))
+            self.rc_combo.blockSignals(False)
+        self._update_status()
+
+    def _context_menu(self, pos):
+        m = QMenu(self)
+        for a in (self.a_copy, self.a_paste, None, self.a_revcomp, self.a_translate, self.a_rmgaps, None,
+                  self.a_insgapcol, self.a_delgapcol, None, self.a_orf, self.a_primer, self.a_blast, None, self.a_rename, self.a_delseq):
+            m.addAction(a) if a else m.addSeparator()
+        m.exec(self.view.viewport().mapToGlobal(pos))
+
+    def _rebuild_scheme_menu(self):
+        self.scheme_menu.clear()
+        for a in self.scheme_group.actions():
+            self.scheme_group.removeAction(a)
+        for name in C.schemes_for(self.model.seq_type):
+            a = self._act(name, lambda _, n=name: self.view.set_scheme(n), None, True)
+            a.setChecked(name == self.view.scheme_name)
+            self.scheme_group.addAction(a)
+            self.scheme_menu.addAction(a)
+
+    def _build_toolbar(self):
+        tb = QToolBar("Main")
+        tb.setIconSize(QSize(22, 22))
+        tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        tb.setMovable(False)
+        self.addToolBar(tb)
+        for a in (self.a_open, self.a_save, None, self.a_undo, self.a_redo, None,
+                  self.a_mode_select, self.a_mode_insert, self.a_mode_over, None,
+                  self.a_normal, self.a_inverse, None,
+                  self.a_zoom_in, self.a_zoom_out, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None,
+                  self.a_translation, self.a_dock, None, self.a_orf, self.a_primer, self.a_align):
+            tb.addAction(a) if a else tb.addSeparator()
+        for a in tb.actions():
+            if a.text() and not a.toolTip():
+                a.setToolTip(a.text().replace("&", ""))
+        self.a_normal.setToolTip("Normal view: coloured letters on neutral background")
+        self.a_inverse.setToolTip("Inverse view: white letters on coloured background (Ctrl+I)")
+        self.addToolBarBreak()
+        tb2 = QToolBar("Options")
+        tb2.setMovable(False)
+        self.addToolBar(tb2)
+        tb = tb2
+        tb.addWidget(QLabel(" Right-click: "))
+        self.rc_combo = QComboBox()
+        for key, label in self.view.RIGHT_CLICK_ACTIONS:
+            self.rc_combo.addItem(label, key)
+        self.rc_combo.currentIndexChanged.connect(lambda i: self._set_right_click(self.rc_combo.itemData(i)))
+        tb.addWidget(self.rc_combo)
+        tb.addSeparator()
+        tb.addWidget(QLabel(" Colour: "))
+        self.scheme_combo = QComboBox()
+        self._fill_scheme_combo()
+        self.scheme_combo.currentTextChanged.connect(self._scheme_combo_changed)
+        tb.addWidget(self.scheme_combo)
+
+    def _fill_scheme_combo(self):
+        self.scheme_combo.blockSignals(True)
+        self.scheme_combo.clear()
+        for name in C.schemes_for(self.model.seq_type):
+            self.scheme_combo.addItem(name)
+        self.scheme_combo.setCurrentText(self.view.scheme_name)
+        self.scheme_combo.blockSignals(False)
+
+    def _scheme_combo_changed(self, name):
+        if name:
+            self.view.set_scheme(name)
+            for a in self.scheme_group.actions():
+                a.setChecked(a.text() == name)
+
+    def _build_status(self):
+        sb = self.statusBar()
+        self.lbl_pos = QLabel(); self.lbl_sel = QLabel(); self.lbl_mode = QLabel(); self.lbl_info = QLabel()
+        for w in (self.lbl_pos, self.lbl_sel, self.lbl_mode):
+            sb.addPermanentWidget(w)
+        sb.addWidget(self.lbl_info, 1)
+
+    # ------------------------------------------------------------ status
+    def _update_status(self, *_):
+        m, v = self.model, self.view
+        if m.nrows:
+            r, c = v.cur_row, v.cur_col
+            seq = m.rows[r].seq
+            ug = sum(1 for ch in seq[:c + 1] if ch not in "-.~") if c < len(seq) else 0
+            ch = seq[c] if c < len(seq) else ""
+            self.lbl_pos.setText(f"  {m.rows[r].name}  col {c + 1}  (residue {ug})  [{ch}]  ")
+        else:
+            self.lbl_pos.setText("")
+        s = v.selection()
+        if s:
+            self.lbl_sel.setText(f"  sel: rows {s[0] + 1}-{s[1] + 1}, cols {s[2] + 1}-{s[3] + 1} ({s[3] - s[2] + 1})  ")
+        else:
+            self.lbl_sel.setText("")
+        self.lbl_mode.setText(f"  {v.mode.upper()}  ")
+        self.lbl_info.setText(f"{m.nrows} sequences, {m.width} columns, {m.seq_type.upper()}"
+                              + (f"  —  {os.path.basename(m.path)}" if m.path else ""))
+        self.a_undo.setEnabled(m.can_undo()); self.a_undo.setText(f"&Undo {m.undo_text()}".strip())
+        self.a_redo.setEnabled(m.can_redo()); self.a_redo.setText(f"&Redo {m.redo_text()}".strip())
+        title = "NeoEdit" + (f" — {os.path.basename(m.path)}" if m.path else " — untitled") + (" *" if m.dirty else "")
+        self.setWindowTitle(title)
+
+    def _on_model(self, what):
+        self._update_status()
+        if what == "type":
+            self._rebuild_scheme_menu(); self._fill_scheme_combo()
+
+    # ------------------------------------------------------------ file ops
+    def _maybe_save(self) -> bool:
+        if not self.model.dirty:
+            return True
+        r = QMessageBox.question(self, "Unsaved changes", "Save changes to the current alignment?",
+                                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        if r == QMessageBox.Cancel:
+            return False
+        if r == QMessageBox.Save:
+            return self.save_file()
+        return True
+
+    def _set_model(self, model: AlignmentModel):
+        self.model.remove_listener(self._on_model)
+        self.model = model
+        self.model.add_listener(self._on_model)
+        self.view.set_model(model)
+        self.features_panel.set_model(model)
+        self._rebuild_scheme_menu(); self._fill_scheme_combo()
+        self._update_status()
+        if model.features:
+            self.dock.show()
+
+    def new_alignment(self):
+        if not self._maybe_save():
+            return
+        self._set_model(AlignmentModel())
+
+    def open_file(self):
+        if not self._maybe_save():
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Open alignment", self.settings.value("last_dir", ""), FILE_FILTER)
+        if path:
+            self.open_path(path)
+
+    def open_path(self, path: str):
+        try:
+            model = mio.load(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Open failed", f"{path}\n\n{e}\n\n{traceback.format_exc()[-800:]}")
+            return
+        self._set_model(model)
+        self.settings.setValue("last_dir", os.path.dirname(path))
+        self._add_recent(path)
+        self.statusBar().showMessage(f"Opened {path} ({model.nrows} sequences, format {model.format})", 5000)
+
+    def import_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import sequences", self.settings.value("last_dir", ""), FILE_FILTER)
+        if not path:
+            return
+        try:
+            m = mio.load(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Import failed", str(e)); return
+        self.model.begin_batch("Import")
+        for r in m.rows:
+            self.model.add_row(r)
+        self.model.end_batch()
+
+    def save_file(self) -> bool:
+        if not self.model.path or self.model.format == "genbank" and self.model.nrows > 1:
+            return self.save_file_as()
+        try:
+            mio.save(self.model, self.model.path, self.model.format)
+        except Exception as e:
+            QMessageBox.critical(self, "Save failed", str(e)); return False
+        self._update_status()
+        self.statusBar().showMessage(f"Saved {self.model.path}", 3000)
+        return True
+
+    def save_file_as(self) -> bool:
+        filters = [f"{lbl} (" + " ".join("*" + e for e in exts) + ")" for lbl, _, exts, _ in mio.FORMATS]
+        start = self.model.path or os.path.join(self.settings.value("last_dir", ""), "alignment.fasta")
+        path, chosen = QFileDialog.getSaveFileName(self, "Save alignment as", start, ";;".join(filters))
+        if not path:
+            return False
+        idx = filters.index(chosen) if chosen in filters else 0
+        fmt = mio.FORMATS[idx][1]
+        exts = mio.FORMATS[idx][2]
+        if not os.path.splitext(path)[1]:
+            path += exts[0]
+        try:
+            mio.save(self.model, path, fmt)
+        except Exception as e:
+            QMessageBox.critical(self, "Save failed", str(e)); return False
+        self.settings.setValue("last_dir", os.path.dirname(path))
+        self._add_recent(path)
+        self._update_status()
+        return True
+
+    def export_selected(self):
+        rows = self.view.target_rows()
+        if not rows:
+            return
+        sub = AlignmentModel([self.model.rows[i].copy() for i in rows], self.model._seq_type)
+        old, self.model = self.model, sub
+        try:
+            self.save_file_as()
+        finally:
+            self.model = old
+            self._update_status()
+
+    def _recent(self) -> list[str]:
+        v = self.settings.value("recent", [])
+        if isinstance(v, str):
+            v = [v]
+        return [p for p in (v or []) if isinstance(p, str) and os.path.sep in p]
+
+    def _add_recent(self, path):
+        path = os.path.abspath(path)
+        rec = [p for p in self._recent() if p != path]
+        rec.insert(0, path)
+        self.settings.setValue("recent", rec[:10])
+        self._fill_recent()
+
+    def _fill_recent(self):
+        self.recent_menu.clear()
+        for p in self._recent():
+            self.recent_menu.addAction(self._act(p, lambda _, q=p: (self._maybe_save() and self.open_path(q))))
+
+    def _restore(self):
+        self._fill_recent()
+        g = self.settings.value("geometry")
+        if g:
+            self.restoreGeometry(g)
+        fs = self.settings.value("font_size")
+        if fs:
+            self.view.font_size = int(fs); self.view._apply_font()
+        fam = self.settings.value("font_family")
+        if fam:
+            self.view.set_font_family(fam)
+        rck = self.settings.value("right_click_action")
+        if rck in dict(self.view.RIGHT_CLICK_ACTIONS):
+            self._set_right_click(rck)
+        tw = self.settings.value("text_weight")
+        if tw in ("regular", "semibold", "bold"):
+            {"regular": self.a_w_reg, "semibold": self.a_w_semi, "bold": self.a_w_bold}[tw].setChecked(True)
+            self.view.set_text_style(weight=tw)
+        cr = self.settings.value("crisp_text")
+        if cr is not None:
+            cr = cr in (True, "true", "True", 1, "1")
+            self.a_crisp.setChecked(cr); self.view.set_text_style(crisp=cr)
+        rp, cp = self.settings.value("row_pad"), self.settings.value("col_pad")
+        if rp is not None or cp is not None:
+            self.view.set_spacing(int(rp) if rp is not None else None, int(cp) if cp is not None else None)
+        inv = self.settings.value("inverse_view", False)
+        inv = inv in (True, "true", "True", 1, "1")
+        self._set_inverse(inv)
+        sch = self.settings.value("scheme")
+        if sch and sch in C.schemes_for(self.model.seq_type):
+            self.view.set_scheme(sch); self._fill_scheme_combo()
+
+    def closeEvent(self, e):
+        if not self._maybe_save():
+            e.ignore(); return
+        self.settings.setValue("geometry", self.saveGeometry())
+        self.settings.setValue("font_size", self.view.font_size)
+        self.settings.setValue("font_family", self.view.font_family)
+        self.settings.setValue("scheme", self.view.scheme_name)
+        self.settings.setValue("text_weight", self.view.text_weight)
+        self.settings.setValue("crisp_text", self.view.crisp_text)
+        self.settings.setValue("row_pad", self.view.row_pad)
+        self.settings.setValue("col_pad", self.view.col_pad)
+        # close any non-modal dialogs / secondary windows we opened
+        for w in list(self._children):
+            try:
+                w.close()
+            except RuntimeError:
+                pass
+        self._children.clear()
+        if self.find_dlg is not None:
+            self.find_dlg.close()
+        e.accept()
+
+    # ------------------------------------------------------------ edit ops
+    def undo(self):
+        self.model.undo()
+
+    def redo(self):
+        self.model.redo()
+
+    def copy_sel(self):
+        txt = self.view.selected_text()
+        if not txt and self.model.nrows:
+            r = self.model.rows[self.view.cur_row]
+            txt = f">{r.name}\n{r.seq}\n"
+        QApplication.clipboard().setText(txt)
+
+    def copy_raw(self):
+        s = self.view.selection()
+        if s:
+            r0, r1, c0, c1 = s
+            QApplication.clipboard().setText("\n".join(self.model.rows[i].seq[c0:c1 + 1] for i in range(r0, r1 + 1)))
+        elif self.model.nrows:
+            QApplication.clipboard().setText(self.model.rows[self.view.cur_row].seq)
+
+    def paste_seqs(self):
+        txt = QApplication.clipboard().text().strip()
+        if not txt:
+            return
+        import re
+        if txt.startswith(">"):
+            try:
+                m = mio.loads(txt, "fasta")
+            except Exception as e:
+                QMessageBox.warning(self, "Paste", f"Could not parse FASTA: {e}"); return
+            rows = m.rows
+        else:
+            seq = re.sub(r"[\s\d]", "", txt)
+            if self.view.mode != "select" and self.model.nrows:
+                # paste into current row at cursor
+                if self.view.mode == "insert":
+                    self.model.insert_text(self.view.cur_row, self.view.cur_col, seq)
+                else:
+                    self.model.overwrite(self.view.cur_row, self.view.cur_col, seq)
+                self.view.set_cursor(self.view.cur_row, self.view.cur_col + len(seq))
+                return
+            rows = [SequenceRow(f"pasted_{self.model.nrows + 1}", seq)]
+        self.model.begin_batch("Paste")
+        for r in rows:
+            self.model.add_row(r)
+        self.model.end_batch()
+
+    def find(self):
+        if self.find_dlg is None:
+            self.find_dlg = FindDialog(self)
+            self.find_dlg.findNext.connect(self._do_find)
+            self.find_dlg.findInNames.connect(self._find_name)
+        self.find_dlg.show(); self.find_dlg.raise_(); self.find_dlg.pattern.setFocus()
+
+    def find_next(self):
+        if self.find_dlg and self.find_dlg.pattern.text():
+            d = self.find_dlg
+            self._do_find(d.pattern.text(), d.ignore_gaps.isChecked(), d.regex.isChecked(), d.case.isChecked())
+        else:
+            self.find()
+
+    def _do_find(self, pattern, ignore_gaps, regex, case):
+        if not pattern or not self.model.nrows:
+            return
+        try:
+            hit = self.model.find(pattern, self.view.cur_row, self.view.cur_col + 1, ignore_gaps, regex, case)
+        except Exception as e:
+            self.statusBar().showMessage(f"Bad pattern: {e}", 4000); return
+        if hit:
+            r, s, e = hit
+            self.view.select_region(r, r, s, e - 1)
+            self.statusBar().showMessage(f"Found at {self.model.rows[r].name} col {s + 1}", 3000)
+        else:
+            self.statusBar().showMessage("Not found", 3000)
+
+    def _find_name(self, text):
+        t = text.lower()
+        start = self.view.cur_row + 1
+        order = list(range(start, self.model.nrows)) + list(range(0, start))
+        for r in order:
+            if t in self.model.rows[r].name.lower():
+                self.view.sel_rows = {r}; self.view.anchor = None
+                self.view.set_cursor(r, self.view.cur_col)
+                self.view.sel_rows = {r}; self.view.viewport().update()
+                return
+        self.statusBar().showMessage("Name not found", 3000)
+
+    def goto(self):
+        if not self.model.nrows:
+            return
+        n, ok = QInputDialog.getInt(self, "Go to", "Column (alignment position):", self.view.cur_col + 1, 1, max(1, self.model.width))
+        if ok:
+            self.view.set_cursor(self.view.cur_row, n - 1)
+
+    def preferences(self):
+        PreferencesDialog(self.settings, self).exec()
+
+    # ------------------------------------------------------------ view ops
+    def _toggle_consensus(self, on):
+        self.view.show_consensus = on; self.view._refresh()
+
+    def _toggle_translation(self, on):
+        self.view.show_translation = on; self.view._refresh()
+
+    def _toggle_features(self, on):
+        self.view.show_features = on; self.view.viewport().update()
+
+    def _set_inverse(self, on: bool):
+        (self.a_inverse if on else self.a_normal).setChecked(True)
+        self.view.color_target = "background" if on else "text"
+        self.settings.setValue("inverse_view", on)
+        self.view.viewport().update()
+
+    def _toggle_dots(self, on):
+        self.view.dots_for_identity = on; self.view.viewport().update()
+
+    def _set_color_mode(self, mode):
+        self.view.color_mode = mode; self.view.viewport().update()
+
+    def _set_ref(self, ref):
+        self.view.identity_ref = ref; self.view.viewport().update()
+
+    def _set_threshold(self):
+        v, ok = QInputDialog.getDouble(self, "Consensus threshold", "Fraction of residues that must agree:",
+                                       self.view.shade_threshold, 0.0, 1.0, 2)
+        if ok:
+            self.view.shade_threshold = v; self.view._consensus_cache = None; self.view.viewport().update()
+
+    def choose_font(self):
+        from PySide6.QtWidgets import QFontDialog
+        from PySide6.QtGui import QFont
+        cur = QFont(self.view.font_family, self.view.font_size)
+        font, ok = QFontDialog.getFont(cur, self, "Alignment font", QFontDialog.MonospacedFonts)
+        if ok:
+            self.view.font_size = font.pointSize()
+            self.view.set_font_family(font.family())
+
+    def _set_frame(self, k):
+        self.view.trans_frame = k; self.view.viewport().update()
+
+    def _set_overlay_table(self):
+        tables = T.codon_tables()
+        items = [f"{i}: {n}" for i, n in tables]
+        cur = next((k for k, (i, _) in enumerate(tables) if i == self.view.trans_table), 0)
+        s, ok = QInputDialog.getItem(self, "Genetic code", "Table:", items, cur, False)
+        if ok:
+            self.view.trans_table = int(s.split(":")[0]); self.view.viewport().update()
+
+    # ------------------------------------------------------------ sequence ops
+    def rename(self):
+        if not self.model.nrows:
+            return
+        r = self.view.cur_row
+        name, ok = QInputDialog.getText(self, "Rename", "Name:", text=self.model.rows[r].name)
+        if ok and name:
+            self.model.rename(r, name)
+
+    def new_sequence(self):
+        d = NewSequenceDialog(self)
+        if d.exec():
+            self.model.begin_batch("New sequence")
+            for name, seq in d.records():
+                if seq:
+                    self.model.add_row(SequenceRow(name, seq))
+            self.model.end_batch()
+
+    def delete_seqs(self):
+        rows = self.view.target_rows()
+        if not rows:
+            return
+        if len(rows) > 1 and QMessageBox.question(self, "Delete", f"Delete {len(rows)} sequences?") != QMessageBox.Yes:
+            return
+        self.model.remove_rows(rows)
+        self.view.clear_selection()
+
+    def _move(self, d):
+        rows = self.view.target_rows()
+        self.model.move_rows(rows, d)
+        if self.view.sel_rows:
+            self.view.sel_rows = {r + d for r in rows}
+        self.view.set_cursor(self.view.cur_row + d, self.view.cur_col)
+
+    def set_type(self):
+        s, ok = QInputDialog.getItem(self, "Sequence type", "Type:", ["auto", "dna", "rna", "protein"], 0, False)
+        if ok:
+            self.model.seq_type = None if s == "auto" else s
+
+    def blast(self):
+        if not self.model.nrows:
+            return
+        seq = self.model.rows[self.view.cur_row].seq
+        s = self.view.selection()
+        if s and s[0] == s[1]:
+            seq = seq[s[2]:s[3] + 1]
+        prog = "blastn" if self.model.is_nucleotide() else "blastp"
+        EXT.open_blast(seq, prog)
+
+    def translate(self):
+        rows = self.view.target_rows()
+        if not rows:
+            return
+        d = TranslateDialog(self, int(self.settings.value("default_table", 1)))
+        if not d.exec():
+            return
+        v = d.values()
+        out_rows = []
+        from Bio.Seq import Seq
+        for r in rows:
+            row = self.model.rows[r]
+            frames = [v["frame"]] if v["frame"] < 6 else list(range(6))
+            for fr in frames:
+                seq = row.seq
+                if fr >= 3:
+                    seq = str(Seq(seq).reverse_complement())
+                f = fr % 3
+                if v["keep_align"] and not v["to_stop"] and v["frame"] < 6:
+                    aa = T.translate_aligned(seq, v["table"], f)
+                else:
+                    aa = T.translate_gapped(seq, v["table"], f, v["to_stop"])
+                suffix = "" if len(frames) == 1 else f"_{'+' if fr < 3 else '-'}{f + 1}"
+                out_rows.append(SequenceRow(row.name + suffix, aa, row.description))
+        if v["output"] == 0:
+            w = MainWindow()
+            w._set_model(AlignmentModel(out_rows, "protein"))
+            w.show(); self._children.append(w)
+        elif v["output"] == 1:
+            txt = "\n".join(f">{r.name}\n{r.seq}" for r in out_rows)
+            TextDialog(self, "Translation", txt).exec()
+        else:
+            self.model.begin_batch("Translate")
+            for r, nr in zip(rows, out_rows):
+                self.model.set_sequence(r, nr.seq, "Translate")
+            self.model.end_batch()
+            self.model.seq_type = "protein"
+
+    def six_frame(self):
+        if not self.model.nrows:
+            return
+        row = self.model.rows[self.view.cur_row]
+        table = int(self.settings.value("default_table", 1))
+        sf = T.six_frame(row.seq, table)
+        txt = f"Six-frame translation of {row.name} (table {table})\n\n" + "\n\n".join(f"Frame {k}:\n{v}" for k, v in sf.items())
+        TextDialog(self, "Six-frame translation", txt).exec()
+
+    # ------------------------------------------------------------ alignment ops
+    def align_external(self):
+        if self.model.nrows < 2:
+            QMessageBox.information(self, "Align", "Need at least two sequences."); return
+        d = AlignDialog(self, self.settings)
+        if not d.exec():
+            return
+        name, extra, sel_only = d.values()
+        rows = self.view.target_rows() if sel_only else list(range(self.model.nrows))
+        if len(rows) < 2:
+            rows = list(range(self.model.nrows))
+        exe = self.settings.value(f"exe/{name}") or None
+        prog = QProgressDialog(f"Running {name}…", None, 0, 0, self)
+        prog.setWindowModality(Qt.WindowModal); prog.show(); QApplication.processEvents()
+        try:
+            aligned = EXT.run_aligner(name, [self.model.rows[i] for i in rows], exe, extra)
+        except Exception as e:
+            prog.close()
+            QMessageBox.critical(self, name, str(e)); return
+        prog.close()
+        self.model.begin_batch(f"Align ({name})")
+        for i, r in zip(rows, aligned):
+            self.model.set_sequence(i, r.seq)
+        self.model.end_batch()
+        self.statusBar().showMessage(f"{name} finished: {len(rows)} sequences aligned", 5000)
+
+    def extract_cols(self):
+        s = self.view.selection()
+        if not s:
+            return
+        sub = self.model.column_slice(s[2], s[3] + 1)
+        sub.rows = [sub.rows[i] for i in range(s[0], s[1] + 1)]
+        w = MainWindow(); w._set_model(sub); w.show(); self._children.append(w)
+
+    # ------------------------------------------------------------ analysis
+    def orf_finder(self):
+        if not self.model.nrows:
+            return
+        rows = self.view.target_rows()
+        d = ORFFinderDialog(self.model, rows, self, int(self.settings.value("default_table", 1)))
+        d.orfSelected.connect(lambda r, s, e: self.view.select_region(r, r, s, e - 1))
+        d.featuresReady.connect(self._add_features)
+        d.show(); self._children.append(d)
+
+    def primer_design(self):
+        if not self.model.nrows:
+            return
+        if not self.model.is_nucleotide():
+            QMessageBox.information(self, "Primer design", "Primer design needs nucleotide sequences."); return
+        rows = self.view.target_rows()
+        s = self.view.selection()
+        cols = (s[2], s[3]) if s and (s[2] != s[3]) else None
+        d = PrimerDialog(self.model, rows, cols, self)
+        d.pairSelected.connect(lambda r, s_, e: self.view.select_region(r, r, s_, e - 1))
+        d.featuresReady.connect(self._add_features)
+        d.show(); self._children.append(d)
+
+    def _add_features(self, feats):
+        self.model.features.extend(feats)
+        self.features_panel.refresh()
+        if not self.dock.isVisible():
+            self.dock.show()
+            self.resizeDocks([self.dock], [170], Qt.Vertical)
+        self.view.viewport().update()
+
+    def _goto_feature(self, f: Feature):
+        self.view.select_region(f.row, f.row, f.start, f.end - 1)
+
+    def stats(self):
+        if self.model.nrows:
+            StatsDialog(self.model, self.view.target_rows() if len(self.view.target_rows()) > 1 else range(self.model.nrows), self).exec()
+
+    def identity(self):
+        if self.model.nrows:
+            rows = self.view.target_rows()
+            IdentityDialog(self.model, rows if len(rows) > 1 else range(self.model.nrows), self).exec()
+
+    def plot(self):
+        if self.model.nrows:
+            rows = self.view.target_rows()
+            PlotDialog(self.model, rows if len(rows) > 1 else range(self.model.nrows), self).exec()
+
+    def consensus_report(self):
+        if self.model.nrows:
+            TextDialog(self, "Consensus", f">consensus\n{self.view.consensus()}\n").exec()
+
+    # ------------------------------------------------------------ help
+    def shortcuts(self):
+        txt = """Navigation
+  Arrows / PgUp / PgDn / Home / End   move cursor (Shift extends selection, Ctrl+Left/Right jumps 10)
+  Ctrl+G                              go to column
+  Ctrl+wheel                          zoom;  Shift+wheel  horizontal scroll
+
+Gap editing (any mode)
+  Space or -           insert gap at cursor (in current row; all selected rows if a block is selected)
+  Ctrl+Space           insert gap column in all sequences
+  Delete / Backspace   delete gap at / before cursor (only gaps in select mode)
+  Ctrl+Delete          delete gap column (only if every sequence has a gap there)
+  Drag a selected block left/right to slide residues over gaps (BioEdit-style)
+  Right-click            insert/delete a gap in the clicked (or selected) sequence, or in all
+                         unselected sequences - choose under Edit > Right-click action
+  Shift+right-click      context menu
+
+Modes (F5 select, F6 insert, F7 overwrite)
+  In insert/overwrite mode, typed letters edit residues; Delete removes residues.
+
+Selection
+  Click & drag in the grid  rectangular block;  click a name  whole row (Ctrl/Shift to extend)
+  Click the ruler           select a column;     Esc clears the selection
+
+Other
+  Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next, Ctrl+R reverse complement,
+  Ctrl+T translation overlay, Ctrl+Shift+T translate, Ctrl+Shift+O ORF finder, Ctrl+Shift+P primer design,
+  Ctrl+M align with external program
+"""
+        TextDialog(self, "Keyboard shortcuts", txt).exec()
+
+    def about(self):
+        QMessageBox.about(self, "About NeoEdit",
+                          f"<b>NeoEdit</b> {__version__}<br>A modern, open, cross-platform sequence alignment editor "
+                          f"inspired by Tom Hall's BioEdit.<br><br>Python {sys.version.split()[0]}, PySide6, Biopython, primer3-py.")
