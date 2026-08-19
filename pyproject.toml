@@ -28,5 +28,8 @@ neoedit-gui = "neoedit.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+neoedit = ["resources/bioedit_tables/*.tab", "resources/icons/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

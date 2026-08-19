@@ -1,5 +1,7 @@
 # NeoEdit
 
+<img src="src/neoedit/resources/icons/neoedit.png" width="96" align="right" alt="NeoEdit icon">
+
 A modern, open-source, cross-platform (Windows / macOS / Linux) sequence alignment
 editor inspired by Tom Hall's **BioEdit** — NeoEdit is a from-scratch rebuild in Python with Qt (PySide6),
 Biopython and Primer3.

@@ -11,6 +11,9 @@ def main(argv=None):
     app = QApplication(argv)
     app.setApplicationName("NeoEdit")
     app.setOrganizationName("neoedit")
+    app.setDesktopFileName("neoedit")
+    from .ui.icons import app_icon
+    app.setWindowIcon(app_icon())
     from .ui.main_window import MainWindow
     files = [a for a in argv[1:] if not a.startswith("-")]
     w = MainWindow(files)

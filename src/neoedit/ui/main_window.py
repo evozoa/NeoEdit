@@ -17,7 +17,7 @@ from ..analysis import translate as T
 from ..analysis import external as EXT
 from .alignment_view import AlignmentView
 from .feature_track import FeaturePanel
-from .icons import icon
+from .icons import icon, app_icon as icon_app
 from .dialogs.translate_dialog import TranslateDialog
 from .dialogs.orf_dialog import ORFFinderDialog
 from .dialogs.primer_dialog import PrimerDialog
@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
     def __init__(self, paths: list[str] | None = None):
         super().__init__()
         self.setWindowTitle("NeoEdit")
+        self.setWindowIcon(icon_app())
         self.resize(1200, 750)
         self.settings = QSettings("neoedit", os.environ.get("NEOEDIT_SETTINGS", "neoedit"))
         self.model = AlignmentModel()

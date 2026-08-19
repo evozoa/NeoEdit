@@ -229,6 +229,24 @@ _BUILDERS = {
 }
 
 
+_APP_ICON = None
+
+
+def app_icon() -> QIcon:
+    """The NeoEdit application icon (all sizes) from resources/icons."""
+    global _APP_ICON
+    if _APP_ICON is None:
+        import os
+        d = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "icons")
+        ic = QIcon()
+        for S in (16, 24, 32, 48, 64, 128, 256, 512):
+            f = os.path.join(d, f"neoedit_{S}.png")
+            if os.path.exists(f):
+                ic.addFile(f, QSize(S, S))
+        _APP_ICON = ic
+    return _APP_ICON
+
+
 def icon(name: str) -> QIcon:
     if name not in _cache:
         _cache[name] = QIcon(_BUILDERS[name]())
