@@ -70,6 +70,34 @@ def translate_aligned(seq: str, table: int = 1, frame: int = 0) -> str:
     return "".join(out)
 
 
+def translate_aligned_reverse(seq: str, table: int = 1, frame: int = 0) -> str:
+    """translate_aligned() on the reverse strand; result is ordered 3'->5' along the
+    alignment so it can be drawn left-to-right beneath the row."""
+    from Bio.Seq import Seq as _S
+    rc = str(_S(seq.replace("-", "N").replace(".", "N").replace("~", "N")).reverse_complement())
+    rc = "".join("-" if c == "N" and seq[len(seq) - 1 - i] in GAPSET else c for i, c in enumerate(rc))
+    return translate_aligned(rc, table, frame)
+
+
+def translate_region(seq: str, start: int, end: int, table: int = 1, strand: int = 1) -> str:
+    """Translate alignment columns [start,end) of a row in its own frame.
+
+    Gaps are dropped before translation, so an indel inside the feature does not
+    shift the reading frame of the rest of it.
+    """
+    from Bio.Seq import Seq as _S
+    sub = "".join(c for c in seq[start:end] if c not in GAPSET).upper().replace("U", "T")
+    if strand < 0:
+        sub = str(_S(sub).reverse_complement())
+    sub = sub[: len(sub) - (len(sub) % 3)]
+    if not sub:
+        return ""
+    try:
+        return str(_S(sub).translate(table=table))
+    except Exception:
+        return translate_gapped(sub, table, 0)
+
+
 def six_frame(seq: str, table: int = 1) -> dict[str, str]:
     s = "".join(c for c in seq if c not in GAPSET)
     rc = str(Seq(s.upper().replace("U", "T")).reverse_complement())

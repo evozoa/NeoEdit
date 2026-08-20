@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         self.view.modeChanged.connect(self._update_status)
         self.view.featureActivated.connect(lambda f: None)
         self.model.add_listener(self._on_model)
+        self.view.translation_provider = self._translation_regions
         self._update_status()
         self._restore()
         self.view.trans_table = int(self.settings.value("default_table", 1))
@@ -298,14 +299,25 @@ class MainWindow(QMainWindow):
         self._rebuild_scheme_menu()
         for a in (self.a_col_scheme, self.a_col_ident, self.a_col_none, self.a_normal, self.a_inverse, self.a_dots, None, self.a_ref_cons, self.a_ref_first, self.a_threshold):
             v.addAction(a) if a else v.addSeparator()
-        tm = v.addMenu("Translation overlay")
+        tm = v.addMenu("Amino acid line")
+        tm.addAction(self.a_translation)
+        self.a_trans_feat = self._act("Use annotated ORFs / CDS (own frame and code)",
+                                      self._toggle_trans_features, None, True)
+        self.a_trans_feat.setChecked(True)
+        tm.addAction(self.a_trans_feat)
+        tm.addSeparator()
         self.frame_actions = QActionGroup(self)
-        for i in range(3):
-            a = self._act(f"Frame +{i + 1}", lambda _, k=i: self._set_frame(k), None, True)
+        for i, lab in enumerate(["+1", "+2", "+3", "-1", "-2", "-3"]):
+            a = self._act(f"Elsewhere: frame {lab}", lambda _, k=i: self._set_frame(k), None, True)
             self.frame_actions.addAction(a); tm.addAction(a)
             if i == 0:
                 a.setChecked(True)
-        tm.addAction(self._act("Genetic code for overlay…", self._set_overlay_table))
+        self.a_trans_blank = self._act("Elsewhere: leave blank", self._toggle_trans_fill, None, True)
+        self.a_trans_blank.setChecked(True)
+        tm.addAction(self.a_trans_blank)
+        tm.addSeparator()
+        self.a_trans_table = self._act("Genetic code outside ORFs…", self._set_overlay_table)
+        tm.addAction(self.a_trans_table)
 
         s = mb.addMenu("&Sequence")
         self.group_menu = QMenu("&Groups", self)
@@ -466,6 +478,14 @@ class MainWindow(QMainWindow):
         else:
             self.lbl_sel.setText("")
         self.lbl_mode.setText(f"  {v.mode_text()}  ")
+        if v.show_translation:
+            frames = ["+1", "+2", "+3", "-1", "-2", "-3"]
+            bits = []
+            if v.trans_from_features:
+                bits.append("ORFs")
+            if v.trans_fill == "all" or not v.trans_from_features:
+                bits.append(f"frame {frames[v.trans_frame]} code {v.trans_table}")
+            self.lbl_mode.setText(f"  {v.mode_text()}  |  aa: {', '.join(bits) or 'off'}  ")
         self.lbl_info.setText(f"{m.nrows} sequences, {m.width} columns, {m.seq_type.upper()}"
                               + (f"  —  {os.path.basename(m.path)}" if m.path else ""))
         self.a_undo.setEnabled(m.can_undo()); self.a_undo.setText(f"&Undo {m.undo_text()}".strip())
@@ -645,6 +665,20 @@ class MainWindow(QMainWindow):
         rck = self.settings.value("right_click_action")
         if rck in dict(self.view.RIGHT_CLICK_ACTIONS):
             self._set_right_click(rck)
+        tf = self.settings.value("trans_frame")
+        if tf is not None:
+            self.view.trans_frame = int(tf)
+        tt = self.settings.value("trans_table")
+        if tt is not None:
+            self.view.trans_table = int(tt)
+        tff = self.settings.value("trans_from_features")
+        if tff is not None:
+            on = tff in (True, "true", "True", 1, "1")
+            self.a_trans_feat.setChecked(on); self.view.trans_from_features = on
+        tfl = self.settings.value("trans_fill")
+        if tfl:
+            self.view.trans_fill = tfl
+            self.a_trans_blank.setChecked(tfl == "regions")
         tw = self.settings.value("text_weight")
         if tw in ("regular", "semibold", "bold"):
             {"regular": self.a_w_reg, "semibold": self.a_w_semi, "bold": self.a_w_bold}[tw].setChecked(True)
@@ -833,7 +867,22 @@ class MainWindow(QMainWindow):
             self.view.set_font_family(font.family())
 
     def _set_frame(self, k):
-        self.view.trans_frame = k; self.view.viewport().update()
+        self.view.trans_frame = k
+        self.view.trans_fill = "all"
+        if hasattr(self, "a_trans_blank"):
+            self.a_trans_blank.setChecked(False)
+        self.settings.setValue("trans_frame", k)
+        self.view.viewport().update(); self._update_status()
+
+    def _toggle_trans_features(self, on):
+        self.view.trans_from_features = on
+        self.settings.setValue("trans_from_features", on)
+        self.view.viewport().update(); self._update_status()
+
+    def _toggle_trans_fill(self, on):
+        self.view.trans_fill = "regions" if on else "all"
+        self.settings.setValue("trans_fill", self.view.trans_fill)
+        self.view.viewport().update(); self._update_status()
 
     def _set_overlay_table(self):
         tables = T.codon_tables()
@@ -841,7 +890,9 @@ class MainWindow(QMainWindow):
         cur = next((k for k, (i, _) in enumerate(tables) if i == self.view.trans_table), 0)
         s, ok = QInputDialog.getItem(self, "Genetic code", "Table:", items, cur, False)
         if ok:
-            self.view.trans_table = int(s.split(":")[0]); self.view.viewport().update()
+            self.view.trans_table = int(s.split(":")[0])
+            self.settings.setValue("trans_table", self.view.trans_table)
+            self.view.viewport().update(); self._update_status()
 
     # ------------------------------------------------------------ sequence ops
     def rename(self):
@@ -1270,6 +1321,7 @@ class MainWindow(QMainWindow):
         self.genome_contig = seqid
         self._set_model(m)
         self.view.feature_provider = self._genome_features
+        self.view.translation_provider = self._translation_regions
         self.genome_panel.set_contig(seqid, L, fetch_seq=lambda s, e, _id=seqid: self.genome.fetch(_id, s, e))
         self.genome_panel.region.fetch_var = self._variation
         self.genome_panel.set_annotation(self.annotation)
@@ -1291,6 +1343,7 @@ class MainWindow(QMainWindow):
         self.genome_panel.set_annotation(ann)
         self.genome_panel.set_insertions(self.insertion_carets())
         self.view.feature_provider = self._genome_features
+        self.view.translation_provider = self._translation_regions
         self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
         self.genome_panel.set_window(0, min(L, max(2000, L)))
         self._grid_scrolled()
@@ -1503,6 +1556,29 @@ class MainWindow(QMainWindow):
         if self.model.nrows:
             self.view.set_cursor(self.ref_index(), c0)
             self.view.horizontalScrollBar().setValue(start)
+
+    def _translation_regions(self, row: int, c0: int, c1: int):
+        """Coding regions for the amino-acid line: annotated CDS on the reference row
+        plus any ORF-finder results, each with its own strand and genetic code."""
+        out = []
+        default_table = int(self.settings.value("default_table", 1))
+        if self.annotation and self.genome_contig and row == self.ref_index():
+            proj = self.proj()
+            u0, u1 = proj.col_to_ref(c0), proj.col_to_ref(c1) + 1
+            for g in self.annotation.overlapping(self.genome_contig, u0, u1):
+                if g.biotype and g.biotype.lower() not in ("cds", "gene", "mrna", "protein_coding", "bed"):
+                    continue
+                t = max(g.transcripts, key=lambda t: (len(t.cds), t.end - t.start)) if g.transcripts else None
+                segs = (t.cds or t.exons) if t else [(g.start, g.end)]
+                table = int(g.attrs.get("transl_table") or (2 if self.model.circular and not g.cytoplasmic else default_table))
+                for a, b in segs:
+                    ca, cb = proj.span_to_cols(a, b) if not proj.identity else (a, b)
+                    if cb > c0 and ca < c1:
+                        out.append((ca, cb, g.strand, table, g.name))
+        for f in self.model.features:
+            if f.row == row and f.type in ("ORF", "CDS") and f.end > c0 and f.start < c1:
+                out.append((f.start, f.end, f.strand, int(f.data.get("table", default_table)), f.label))
+        return out
 
     def _genome_features(self, row: int, c0: int, c1: int):
         """Feature provider for the grid: gene models of the genome row as CDS/exon features."""

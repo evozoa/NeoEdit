@@ -84,8 +84,11 @@ class AlignmentView(QAbstractScrollArea):
         self.dots_for_identity = False
         self.show_consensus = True
         self.show_translation = False
-        self.trans_frame = 0
+        self.trans_frame = 0            # 0-2 = +1..+3, 3-5 = -1..-3
         self.trans_table = 1
+        self.trans_from_features = True # translate annotated ORFs/CDS in their own frame and code
+        self.trans_fill = "regions"     # "regions" = only inside features, "all" = whole row in the chosen frame
+        self.translation_provider = None  # callable(row, c0, c1) -> [(start, end, strand, table, name)]
         self.show_features = True
         self.shade_features = False     # tint residues under a feature (off: only a marker bar)
         self.feature_alpha = 45
@@ -486,16 +489,9 @@ class AlignmentView(QAbstractScrollArea):
                     disp = "."
                 in_sel = bool(sel and sel[0] <= r <= sel[1] and sel[2] <= c <= sel[3])
                 self._draw_cell(p, x, y, disp, bgc, fg, in_sel, selcol, force_bg=(self.color_mode == "identity"))
-            # translation
+            # translation line beneath the residues
             if self.show_translation and m.is_nucleotide():
-                aa = T.translate_aligned(seq, self.trans_table, self.trans_frame)
-                p.setPen(QColor("#888") if not dark else QColor("#aaa"))
-                for k, a in enumerate(aa):
-                    c = self.trans_frame + k * 3 + 1
-                    if c0 <= c < c1:
-                        x = grid_left + (c - hs) * self.cell_w
-                        self._text(p, x + self._tx, y + self.cell_h + self._ty, a)
-                p.setPen(fg)
+                self._draw_translation(p, r, seq, y, c0, c1, hs, grid_left, fg, dark)
         # --- features overlay
         feats = list(m.features) if m.features else []
         if self.show_features and self.feature_provider is not None:
@@ -537,6 +533,55 @@ class AlignmentView(QAbstractScrollArea):
             else:
                 p.drawRect(rc.adjusted(0, 0, -1, -1))
         p.end()
+
+    AA_REGION_BG = "#e8e8e8"          # neutral shading for residues inside an annotated ORF
+    AA_REGION_BG_DARK = "#3a3a3a"
+
+    def _translation_regions(self, row, c0, c1):
+        if not self.trans_from_features or self.translation_provider is None:
+            return []
+        try:
+            return self.translation_provider(row, c0, c1)
+        except Exception:
+            return []
+
+    def _draw_translation(self, p: QPainter, row, seq, y, c0, c1, hs, grid_left, fg, dark):
+        """Amino acids under the nucleotides.
+
+        Residues inside an annotated ORF/CDS are translated in that feature's own
+        frame with its own genetic code and shaded a neutral grey; everywhere else
+        the chosen frame/table is used (or nothing, in 'regions' mode)."""
+        ay = y + self.cell_h
+        muted = QColor("#8a8a8a") if not dark else QColor("#9a9a9a")
+        regions = self._translation_regions(row, c0, c1)
+        covered: set[int] = set()
+        bg = QColor(self.AA_REGION_BG_DARK if dark else self.AA_REGION_BG)
+        for (rs, re_, strand, table, name) in regions:
+            x0 = grid_left + (max(rs, c0) - hs) * self.cell_w
+            x1 = grid_left + (min(re_, c1) - hs) * self.cell_w
+            if x1 > x0:
+                p.fillRect(int(x0), ay, int(x1 - x0), self.cell_h, bg)
+            aa = T.translate_region(seq, rs, re_, table, strand)
+            for k, ch in enumerate(aa):
+                # column of the middle base of this codon, in feature orientation
+                cc = (rs + k * 3 + 1) if strand > 0 else (re_ - 1 - (k * 3 + 1))
+                covered.add(cc)
+                if not (c0 <= cc < c1):
+                    continue
+                x = grid_left + (cc - hs) * self.cell_w
+                p.setPen(QColor("#c02020") if ch == "*" else (QColor("#222") if not dark else QColor("#ddd")))
+                self._text(p, x + self._tx, ay + self._ty, ch)
+        if self.trans_fill == "all" or not regions:
+            aa = T.translate_aligned(seq, self.trans_table, self.trans_frame % 3) \
+                if self.trans_frame < 3 else T.translate_aligned_reverse(seq, self.trans_table, self.trans_frame - 3)
+            p.setPen(muted)
+            for k, ch in enumerate(aa):
+                cc = (self.trans_frame % 3) + k * 3 + 1 if self.trans_frame < 3 else len(seq) - 1 - ((self.trans_frame - 3) + k * 3 + 1)
+                if cc in covered or not (c0 <= cc < c1):
+                    continue
+                x = grid_left + (cc - hs) * self.cell_w
+                self._text(p, x + self._tx, ay + self._ty, ch)
+        p.setPen(fg)
 
     def _cell_color(self, ch, c, ref_seq):
         if not ch or ch in GAPSET:

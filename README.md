@@ -21,8 +21,13 @@ actually use, on a codebase that can keep evolving:
   BioEdit) vs consensus or first sequence, identities-as-dots, consensus row with
   adjustable threshold.
 * **Sequence tools** – reverse-complement, complement, reverse, case, DNA↔RNA,
-  translation (any NCBI genetic code, any frame, keep-aligned or six-frame report),
-  live translation overlay under DNA.
+  translation (any NCBI genetic code, any frame, keep-aligned or six-frame report).
+* **Amino-acid line** – an interleaved protein row under each nucleotide sequence.
+  Annotated ORFs and CDS features are translated in *their own* frame with *their own*
+  genetic code (mitochondrial genes with table 2, cytoplasmically-translated MDPs with
+  table 1) and shaded a neutral grey, so coding regions are shown on the protein line
+  rather than washing out the nucleotides; outside them you choose the frame (+1…−3)
+  and code, or leave it blank.
 * **ORF finder (MitoFinder-style)** – alternate genetic codes (default vertebrate
   mito), alternative start codons, both strands, 5′/3′ partial ORFs (incomplete
   stop codons), nested ORFs; results as features; export GFF3 / GenBank feature

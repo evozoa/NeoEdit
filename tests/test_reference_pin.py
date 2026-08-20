@@ -80,3 +80,43 @@ def test_circular_from_genbank():
     gb = os.path.join(HERE, "..", "examples", "mito", "NC_002333.gb")
     m = mio.load(gb, "genbank")
     assert m.circular is True
+
+
+def test_translation_line_uses_feature_frame_and_code():
+    """The amino-acid line translates each annotated ORF in its own frame with its
+    own genetic code: mito genes with table 2, MDPs with table 1."""
+    import os
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from neoedit.ui.main_window import MainWindow
+    from neoedit.analysis.translate import translate_region
+    HERE = os.path.dirname(__file__)
+    gb = os.path.join(HERE, "..", "examples", "mito", "NC_012920_MDP.gb")
+    if not os.path.exists(gb):
+        import pytest; pytest.skip("rCRS+MDP example not built")
+    w = MainWindow([gb]); w.show()
+    seq = w.ref_seq()
+    # humanin: standard code, +strand
+    regs = w._translation_regions(0, 2600, 2760)
+    hn = [r for r in regs if r[4] == "humanin"]
+    assert hn, regs
+    s, e, strand, table, _name = hn[0]
+    assert (strand, table) == (1, 1)
+    assert translate_region(seq, s, e, table, strand).rstrip("*") == "MAPRGFSCLLLLTSEIDLPVKRRA"
+    # COX1: vertebrate mitochondrial code
+    cox = [r for r in w._translation_regions(0, 5900, 6000) if r[4] == "COX1"]
+    assert cox and cox[0][3] == 2
+    s, e, strand, table, _ = cox[0]
+    assert translate_region(seq, s, e, table, strand).startswith("MFADRWLFSTNHKDIGTLYLL")
+    # the same DNA read with the wrong table gives a different protein
+    assert translate_region(seq, s, e, 1, strand)[:21] != "MFADRWLFSTNHKDIGTLYLL"
+    # a minus-strand MDP (SHLP1) translates on its own strand
+    sh = [r for r in w._translation_regions(0, 2450, 2600) if r[4] == "SHLP1"]
+    assert sh and sh[0][2] == -1
+    s, e, strand, table, _ = sh[0]
+    assert translate_region(seq, s, e, table, strand).rstrip("*") == "MCHWAGGASNTGDARGDVFGKQAG"
+    # ORF-finder features on any row also drive the line
+    from neoedit.model.alignment import Feature
+    w.model.features.append(Feature(0, 100, 121, 1, "ORF", "testorf", "#000", data={"table": 4}))
+    assert any(r[4] == "testorf" and r[3] == 4 for r in w._translation_regions(0, 90, 200))
+    w.model.dirty = False; w.close()
