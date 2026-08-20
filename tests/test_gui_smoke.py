@@ -160,3 +160,29 @@ def test_modes_slide_grab_downstream(app):
     # model-level downstream left move fails if non-gaps precede
     assert not w.model.move_downstream([1], 2, -1)
     w.model.dirty = False; w.close()
+
+
+def test_bioedit_shortcuts(app):
+    """Ctrl+Shift+R reverse-complements the selected rows, as in BioEdit (Ctrl+R kept as alias);
+    no two actions may share a key binding."""
+    from PySide6.QtGui import QAction
+    from neoedit.ui.main_window import MainWindow
+    w = MainWindow()
+    w.show()
+    w.open_path(EXAMPLE)
+    assert [k.toString() for k in w.a_revcomp.shortcuts()] == ["Ctrl+Shift+R", "Ctrl+R"]
+    seen = {}
+    for a in w.findChildren(QAction):
+        for k in a.shortcuts():
+            if k.toString():
+                seen.setdefault(k.toString(), []).append(a.text())
+    assert not {k: v for k, v in seen.items() if len(v) > 1}
+    w.activateWindow(); w.view.setFocus(); app.processEvents()
+    rows = w.view.target_rows()
+    seqs = [w.model.rows[r].seq for r in rows]
+    from Bio.Seq import Seq
+    rc = [str(Seq(s).reverse_complement()) for s in seqs]
+    QTest.keyClick(w.view, Qt.Key_R, Qt.ControlModifier | Qt.ShiftModifier); app.processEvents()
+    assert [w.model.rows[r].seq for r in rows] == rc
+    QTest.keyClick(w.view, Qt.Key_R, Qt.ControlModifier); app.processEvents()   # alias undoes it again
+    assert [w.model.rows[r].seq for r in rows] == seqs

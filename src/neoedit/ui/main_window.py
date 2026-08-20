@@ -101,7 +101,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ actions
     def _act(self, text, slot, shortcut=None, checkable=False, tip=None):
         a = QAction(text, self)
-        if shortcut:
+        if isinstance(shortcut, (list, tuple)):      # several bindings; the first is shown in menus
+            a.setShortcuts([QKeySequence(k) for k in shortcut])
+        elif shortcut:
             a.setShortcut(QKeySequence(shortcut))
         a.setCheckable(checkable)
         if tip:
@@ -195,7 +197,8 @@ class MainWindow(QMainWindow):
         self.a_threshold = A("Consensus threshold…", self._set_threshold)
 
         # sequence ops
-        self.a_revcomp = A("&Reverse complement", lambda: self.model.reverse_complement(self.view.target_rows()), "Ctrl+R")
+        self.a_revcomp = A("&Reverse complement", lambda: self.model.reverse_complement(self.view.target_rows()),
+                           ("Ctrl+Shift+R", "Ctrl+R"))      # Ctrl+Shift+R as in BioEdit; Ctrl+R kept as an alias
         self.a_rev = A("Re&verse", lambda: self.model.reverse(self.view.target_rows()))
         self.a_comp = A("&Complement", lambda: self.model.complement(self.view.target_rows()))
         self.a_upper = A("&Uppercase", lambda: self.model.to_upper(self.view.target_rows()))
@@ -234,7 +237,7 @@ class MainWindow(QMainWindow):
         self.a_primer = A("&Primer design (single template)…", self.primer_design, "Ctrl+Shift+P")
         self.a_design = A("&Conserved / discriminating primers…", self.design_primers, "Ctrl+Shift+D",
                           tip="Design primers across the alignment: universal for a group, or discriminating against another group (eDNA)")
-        self.a_restrict = A("&Restriction sites…", self.restriction_sites, "Ctrl+Shift+R",
+        self.a_restrict = A("&Restriction sites…", self.restriction_sites, "Ctrl+Shift+X",
                             tip="Restriction map of one sequence, or which enzymes distinguish sequences in the alignment")
         self.a_stats = A("Sequence &statistics", self.stats)
         self.a_ident = A("&Identity matrix", self.identity)
@@ -1669,9 +1672,10 @@ Selection
   Click the ruler           select a column;     Esc clears the selection
 
 Other
-  Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next, Ctrl+R reverse complement,
+  Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next,
+  Ctrl+Shift+R reverse complement (as in BioEdit; Ctrl+R also works),
   Ctrl+T translation overlay, Ctrl+Shift+T translate, Ctrl+Shift+O ORF finder, Ctrl+Shift+P primer design,
-  Ctrl+M align with MAFFT
+  Ctrl+Shift+X restriction sites, Ctrl+M align with MAFFT
 """
         TextDialog(self, "Keyboard shortcuts", txt).exec()
 
