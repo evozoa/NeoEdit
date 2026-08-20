@@ -42,6 +42,11 @@ actually use, on a codebase that can keep evolving:
   plasmid) populate the gene view from their own features; MAFFT `--add --keeplength`
   anchors a population sample to the reference without moving its coordinates, with a
   per-site variation track.
+* **Mitochondrial-derived peptides** – `examples/mito/NC_012920_MDP.gb` is the human
+  rCRS with humanin, MOTS-c and SHLP1-6 annotated as CDS features carrying
+  `/transl_table=1`; pin it as the reference and the MDPs appear by name, in their own
+  color, on the map, the circle and the grid. Peptides are also shipped as
+  `resources/mdp_reference_peptides.fasta` for naming ORFs in other taxa by similarity.
 * **Circular map** – mitogenome/plasmid view with strand-separated gene arrows, GC
   content and GC skew rings, focal wedge synced to the grid; SVG/PNG export.
 * **Primer design across an alignment** – conserved (universal) or discriminating

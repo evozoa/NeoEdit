@@ -57,6 +57,12 @@ class Gene:
         return self.end - self.start
 
     @property
+    def cytoplasmic(self) -> bool:
+        """CDS translated with the standard code inside an organelle genome, i.e. a
+        mitochondrial-derived peptide or similar non-canonical ORF."""
+        return self.attrs.get("transl_table") == "1"
+
+    @property
     def low_confidence(self) -> bool:
         """Liftoff flags: partial mapping or low identity."""
         a = self.attrs
@@ -317,20 +323,33 @@ def load_genbank(path: str) -> Annotation:
                 if f.type not in ("gene", "CDS", "rRNA", "tRNA", "ncRNA", "mRNA", "misc_feature", "D-loop"):
                     continue
                 name = f.qualifiers.get("gene", f.qualifiers.get("product", f.qualifiers.get("locus_tag", [f.type])))[0]
-                s, e = int(f.location.start), int(f.location.end)
                 st = f.location.strand or 1
-                t = Transcript(f"{name}.{k}", name, s, e, st, f.type,
-                               [(int(p.start), int(p.end)) for p in f.location.parts])
-                if f.type == "CDS":
-                    t.cds = list(t.exons)
-                g = Gene(f"{name}.{k}", name, rec.id, s, e, st, f.type, [t],
-                         attrs={q: v[0] for q, v in f.qualifiers.items() if q in ("product", "note")})
-                (plain if f.type == "gene" else typed).append(g)
+                attrs = {q: v[0] for q, v in f.qualifiers.items()
+                         if q in ("product", "note", "transl_table", "db_xref")}
+                parts = [(int(p.start), int(p.end)) for p in f.location.parts]
+                # A feature that wraps the origin of a circular molecule (e.g. the
+                # D-loop, join(16024..16569,1..576)) would otherwise be flattened to
+                # the whole genome. Split it into its contiguous pieces instead.
+                span = max(e2 for _s2, e2 in parts) - min(s2 for s2, _e2 in parts)
+                wraps = len(parts) > 1 and span > 0.5 * len(rec.seq)
+                groups = [[p] for p in parts] if wraps else [parts]
+                for gi, grp in enumerate(groups):
+                    s2, e2 = min(a for a, _b in grp), max(b for _a, b in grp)
+                    label = name if not wraps else f"{name} ({gi + 1}/{len(groups)})"
+                    t = Transcript(f"{name}.{k}.{gi}", label, s2, e2, st, f.type, list(grp))
+                    if f.type == "CDS":
+                        t.cds = list(t.exons)
+                    a2 = dict(attrs)
+                    if wraps:
+                        a2["wraps_origin"] = "true"
+                    g = Gene(f"{name}.{k}.{gi}", label, rec.id, s2, e2, st, f.type, [t], attrs=a2)
+                    (plain if f.type == "gene" else typed).append(g)
             # keep typed features; add a plain gene only when no typed feature covers it
             for g in typed:
                 ann.add_gene(g)
             for g in plain:
-                if not any(t.name == g.name and t.start < g.end and t.end > g.start for t in typed):
+                if not any(t.name.split(" (")[0] == g.name.split(" (")[0] and t.start < g.end and t.end > g.start
+                           for t in typed):
                     ann.add_gene(g)
     ann.finalize()
     return ann

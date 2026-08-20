@@ -1083,6 +1083,14 @@ class MainWindow(QMainWindow):
         d.show(); self._children.append(d)
 
     ORF_TRACK_COLORS = {1: "#7d3c98", 2: "#0e7490", 3: "#b45309", 4: "#166534", 5: "#9d174d"}
+    # distinct colors for ORFs named after a known peptide (stable per name)
+    NAMED_ORF_COLORS = ["#dc2626", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#2563eb", "#7c3aed", "#db2777"]
+
+    def _named_color(self, name: str) -> str:
+        h = 0
+        for ch in name.lower():
+            h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+        return self.NAMED_ORF_COLORS[h % len(self.NAMED_ORF_COLORS)]
 
     def _orfs_to_track(self, orfs, table: int):
         """Show ORF-finder results as their own track under the gene models."""
@@ -1101,7 +1109,9 @@ class MainWindow(QMainWindow):
                    f"{o.length_aa} aa, start {o.start_codon}, stop {o.stop_codon or 'none'}"
                    f"{', partial ' + partial if partial else ''}<br>genetic code {o.table}"
                    + (f"<br>{o.extra['note']}" if o.extra.get('note') else ""))
-            items.append((s0, e0, o.strand, o.name or f"{o.length_aa}aa", tip))
+            matched = "similar to" in (o.extra.get("note") or "")
+            color = self._named_color(o.name) if (matched and o.name) else None
+            items.append((s0, e0, o.strand, o.name or f"{o.length_aa}aa", tip, color))
         if not items:
             return
         label = f"code {table}"
@@ -1507,7 +1517,7 @@ class MainWindow(QMainWindow):
             t = max(g.transcripts, key=lambda t: (len(t.cds), t.end - t.start)) if g.transcripts else None
             if t is None:
                 continue
-            col = "#1f5fbf" if g.strand > 0 else "#c0392b"
+            col = "#d926a9" if getattr(g, "cytoplasmic", False) else ("#1f5fbf" if g.strand > 0 else "#c0392b")
             segs = [(a, b, "CDS") for a, b in t.cds] or [(a, b, "exon") for a, b in t.exons]
             for a, b, kind in segs:
                 if b > u0 and a < u1:

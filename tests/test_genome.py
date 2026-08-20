@@ -148,3 +148,24 @@ def test_circular_view(tmp_path):
     v.export_image(str(png), 500); v.export_image(str(svg), 500)
     assert png.stat().st_size > 5000 and svg.stat().st_size > 5000
     assert "<svg" in svg.read_text()[:400]
+
+
+def test_origin_spanning_and_mdp_features():
+    """rCRS: the D-loop wraps the origin and must not swallow the genome; MDP CDSs
+    carry transl_table=1 and are flagged cytoplasmic."""
+    import os
+    from neoedit.genome.annotations import load_genbank
+    HERE = os.path.dirname(__file__)
+    gb = os.path.join(HERE, "..", "examples", "mito", "NC_012920_MDP.gb")
+    if not os.path.exists(gb):
+        import pytest; pytest.skip("rCRS+MDP example not built")
+    ann = load_genbank(gb)
+    dl = [g for gs in ann.genes_by_seq.values() for g in gs if g.name.startswith("D-loop")]
+    assert len(dl) == 2 and all(g.attrs.get("wraps_origin") == "true" for g in dl)
+    assert max(len(g) for g in dl) < 1000        # neither piece spans the genome
+    mdp = sorted(g.name for gs in ann.genes_by_seq.values() for g in gs if g.cytoplasmic)
+    assert mdp == ["MOTS-c", "SHLP1", "SHLP2", "SHLP3", "SHLP4", "SHLP5", "SHLP6", "humanin"]
+    # humanin sits inside MT-RNR2 and uses the standard code
+    hn = [g for gs in ann.genes_by_seq.values() for g in gs if g.name == "humanin"][0]
+    assert (hn.start, hn.end, hn.strand) == (2632, 2704, 1)
+    assert hn.attrs["transl_table"] == "1"

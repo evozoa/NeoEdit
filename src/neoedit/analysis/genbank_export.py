@@ -184,11 +184,19 @@ def load_reference_peptides(path: str) -> dict[str, str]:
     """Reference peptides (FASTA) used to name ORFs by similarity, e.g. human humanin,
     MOTS-c, SHLP1-6 sequences from the literature."""
     from Bio import SeqIO as _S
-    out = {}
+    import io as _io
     with open(path, "r", errors="replace") as fh:
-        for rec in _S.parse(fh, "fasta"):
-            out[rec.id] = str(rec.seq).upper().replace("*", "")
+        text = "".join(ln for ln in fh if not ln.lstrip().startswith((";", "#")))
+    out = {}
+    for rec in _S.parse(_io.StringIO(text), "fasta"):
+        out[rec.id] = str(rec.seq).upper().replace("*", "")
     return out
+
+
+def bundled_mdp_peptides() -> str:
+    """Path to the MDP reference peptides shipped with NeoEdit (verified against rCRS)."""
+    import os as _os
+    return _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "resources", "mdp_reference_peptides.fasta")
 
 
 def peptide_identity(a: str, b: str) -> float:

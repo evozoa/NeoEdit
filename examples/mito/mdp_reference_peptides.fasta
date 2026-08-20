@@ -1,0 +1,21 @@
+; Human mitochondrial-derived peptides (MDPs), curated from UniProt/Swiss-Prot.
+; Every sequence below was verified to be encoded in the human mitochondrial
+; reference (rCRS, NC_012920.1) and translated with the STANDARD genetic code
+; (table 1), because MDPs are translated by cytoplasmic ribosomes.
+; Coordinates are rCRS positions of the coding sequence.
+>humanin MT-RNR2 rCRS:2633-2704 (+) UniProt Q8IVG9
+MAPRGFSCLLLLTSEIDLPVKRRA
+>MOTS-c MT-RNR1 rCRS:1343-1390 (+) UniProt A0A0C5B5G6
+MRWQEMGYIFYPRKLR
+>SHLP1 MT-RNR2 rCRS:2488-2559 (-) UniProt A0A3G1DJL7
+MCHWAGGASNTGDARGDVFGKQAG
+>SHLP2 MT-RNR2 rCRS:2091-2168 (-) UniProt A0A3G1DIU6
+MGVKFFTLSTRFFPSVQRAVPLWTNS
+>SHLP3 MT-RNR2 rCRS:1706-1819 (-) UniProt A0A3G1DJQ2
+MLGYNFSSFPCGTISIAPGFNFYRLYFIWVNGLAKVVW
+>SHLP4 MT-RNR2 rCRS:2445-2522 (-) UniProt A0A3G1DJK2
+MLEVMFLVNRRGKICRVPFTFFNLSL
+>SHLP5 MT-RNR2 rCRS:2783-2854 (-) UniProt A0A3G1DJL1
+MYCSEVGFCSEVAPTEIFNAGLVV
+>SHLP6 MT-RNR2 rCRS:2990-3049 (+) UniProt A0A3G1DJN1
+MLDQDIPMVQPLLKVRLFND

@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (QDialog, QFormLayout, QComboBox, QSpinBox, QCheck
                                QVBoxLayout, QLabel, QGroupBox, QTableWidgetItem, QMessageBox, QFileDialog,
                                QSplitter, QPlainTextEdit, QWidget, QLineEdit, QDialogButtonBox, QGridLayout)
 
+import os
+
 from ...analysis import orf_finder as OF
 from ...analysis import genbank_export as GX
 from ...model.alignment import Feature
@@ -72,8 +74,9 @@ class ORFFinderDialog(QDialog):
         self.exp_nt = QPushButton("Export ORFs (nt FASTA)")
         self.exp_nt.clicked.connect(lambda: self.export("nt"))
         self.name_btn = QPushButton("Name from reference peptides…")
-        self.name_btn.setToolTip("Load a FASTA of known peptides (e.g. humanin, MOTS-c, SHLP1-6) and name ORFs "
-                                 "that are similar to them — homology by sequence, not by length")
+        self.name_btn.setToolTip("Name ORFs by similarity to known peptides. Defaults to the bundled human MDP set "
+                                 "(humanin, MOTS-c, SHLP1-6, verified against rCRS); pick any FASTA of your own. "
+                                 "Named ORFs get their own color on the map.")
         self.name_btn.clicked.connect(self.name_from_references)
         self.exp_gb = QPushButton("Export annotated GenBank…")
         self.exp_gb.setToolTip("Write a GenBank file containing the existing annotation plus these ORFs, "
@@ -189,7 +192,9 @@ class ORFFinderDialog(QDialog):
     def name_from_references(self):
         if not self.orfs:
             QMessageBox.information(self, "ORF Finder", "Run the search first."); return
-        path, _ = QFileDialog.getOpenFileName(self, "Reference peptides (FASTA)", "",
+        default = GX.bundled_mdp_peptides()
+        path, _ = QFileDialog.getOpenFileName(self, "Reference peptides (FASTA)",
+                                              default if os.path.exists(default) else "",
                                               "FASTA (*.fasta *.fa *.faa);;All files (*)")
         if not path:
             return

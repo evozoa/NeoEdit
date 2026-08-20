@@ -172,7 +172,7 @@ class RegionView(QWidget):
         self.fetch_var = None               # callable(start,end)->list[float] per-ref-position variant freq (or None)
         self.insertions: list[tuple[int, int, int, int]] = []   # (ref_pos, n_cols, n_seqs, first_column)
         self.expanded = False               # show all transcripts
-        self.orf_tracks: list[dict] = []     # [{"label":str,"color":str,"items":[(s,e,strand,name,tip)]}]
+        self.orf_tracks: list[dict] = []     # [{"label","color","items":[(s,e,strand,name,tip[,color])]}]
         self.setMinimumHeight(150)
         self.setMouseTracking(True)
         self._drag = None
@@ -307,28 +307,34 @@ class RegionView(QWidget):
             y += 4
             for track in self.orf_tracks:
                 col = QColor(track.get("color", "#7d3c98"))
-                vis = [(a, b, st, nm, tip) for (a, b, st, nm, tip) in track["items"] if b > s and a < e]
-                lanes = pack_lanes([(int(self._x(a)), int(self._x(b)) + fm.horizontalAdvance(nm) + 6, (a, b, st, nm, tip))
-                                    for (a, b, st, nm, tip) in vis], gap=4)
+                vis = [it for it in track["items"] if it[1] > s and it[0] < e]
+                lanes = pack_lanes([(int(self._x(it[0])), int(self._x(it[1])) + fm.horizontalAdvance(it[3]) + 6, it)
+                                    for it in vis], gap=4)
                 p.setPen(QColor("#555"))
                 p.drawText(QPointF(2, y + 9), track["label"][:6])
                 lh = 13
                 maxl = max(1, min(len(lanes), (H - y - (34 if self.synteny else 6)) // lh))
                 for li, lane in enumerate(lanes[:maxl]):
                     yy = y + li * lh
-                    for _a0, _a1, (a, b, st, nm, tip) in lane:
+                    for _a0, _a1, item in lane:
+                        a, b, st, nm, tip = item[:5]
+                        icol = QColor(item[5]) if len(item) > 5 and item[5] else col
                         x0, x1 = max(left, self._x(a)), min(right, self._x(b))
                         w = max(2.0, x1 - x0)
-                        p.setPen(Qt.NoPen); p.setBrush(col if st > 0 else col.darker(130))
+                        p.setPen(Qt.NoPen); p.setBrush(icol if st > 0 else icol.darker(130))
                         p.drawRect(QRectF(x0, yy + 1, w, 7))
                         # strand tick
-                        p.setPen(QPen(col.darker(160), 1))
+                        p.setPen(QPen(icol.darker(160), 1))
                         if st > 0:
                             p.drawLine(QPointF(x1, yy + 1), QPointF(x1 + 3, yy + 4.5)); p.drawLine(QPointF(x1 + 3, yy + 4.5), QPointF(x1, yy + 8))
                         else:
                             p.drawLine(QPointF(x0, yy + 1), QPointF(x0 - 3, yy + 4.5)); p.drawLine(QPointF(x0 - 3, yy + 4.5), QPointF(x0, yy + 8))
                         if w > fm.horizontalAdvance(nm) * 0.6:
-                            p.setPen(QColor("#222")); p.drawText(QPointF(x0 + 2, yy + 8), nm)
+                            named = len(item) > 5 and item[5]
+                            p.setPen(QColor(icol).darker(180) if named else QColor("#222"))
+                            f2 = QFont(f); f2.setBold(bool(named)); p.setFont(f2)
+                            p.drawText(QPointF(x0 + 2, yy + 8), nm)
+                            p.setFont(f)
                         self._orf_hits.append((QRectF(x0, yy, w, 9), nm, tip))
                 y += maxl * lh + 3
                 if len(lanes) > maxl:
@@ -369,6 +375,8 @@ class RegionView(QWidget):
         base = QColor("#1f5fbf") if g.strand > 0 else QColor("#c0392b")
         if g.biotype and "protein" not in g.biotype and g.biotype not in ("gene", "mRNA", "CDS", "bed"):
             base = QColor("#7d3c98") if g.strand > 0 else QColor("#a04000")
+        if getattr(g, "cytoplasmic", False):
+            base = QColor("#d926a9")        # cytoplasmically translated (MDP)
         if g.low_confidence:
             base.setAlpha(110)          # faded = partial / low-identity lift-over
         p.setPen(QPen(base, 1)); p.drawLine(QPointF(x0, mid), QPointF(x1, mid))

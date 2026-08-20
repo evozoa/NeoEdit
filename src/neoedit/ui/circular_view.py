@@ -37,6 +37,8 @@ def gc_series(seq: str, n_bins: int) -> tuple[list[float], list[float]]:
 def gene_color(g: Gene) -> QColor:
     bt = (g.biotype or "").lower()
     name = (g.name or "").upper()
+    if getattr(g, "cytoplasmic", False):
+        return QColor("#d926a9")           # MDP: translated on cytoplasmic ribosomes
     if "trna" in bt or name.startswith("TRN"):
         return QColor("#d98c00")
     if "rrna" in bt or name.startswith(("RRN", "S-RRNA", "L-RRNA", "12S", "16S")):
