@@ -52,8 +52,8 @@ class ChromosomeOverview(QWidget):
         self.focus = None                 # tier-3 visible region (drawn as a thin marker)
         self.synteny: list[SyntenyBlock] = []
         self.gene_density: list[int] = []
-        self.setMinimumHeight(34)
-        self.setMaximumHeight(34)
+        self.setMinimumHeight(46)
+        self.setMaximumHeight(46)
         self.setMouseTracking(True)
         self._drag = None
 
@@ -99,14 +99,27 @@ class ChromosomeOverview(QWidget):
                     x = b.left() + b.width() * i / n
                     h = (b.height() - 4) * d / mx
                     p.fillRect(QRectF(x, b.bottom() - 1 - h, max(1.0, b.width() / n), h), QColor(0, 0, 0, 60))
-        # ticks
+        # Ticks. When the tier-2 window covers most of the contig the two rulers show
+        # the same thing at the same scale, so only the contig extremes are labelled
+        # here and the detailed numbers are left to the region view below.
         p.setPen(QColor("#555")); f = self.font(); f.setPointSize(7); p.setFont(f)
+        fm = QFontMetrics(f)
+        span = max(1, self.win[1] - self.win[0])
+        redundant = span > 0.6 * self.length
         step = nice_step(self.length, 10)
         for t in range(0, self.length + 1, step):
             x = self._x(t)
             p.drawLine(QPointF(x, b.bottom() + 1), QPointF(x, b.bottom() + 4))
+            if redundant and t != 0:
+                continue
             lab = f"{t / 1e6:g} Mb" if self.length >= 2_000_000 else (f"{t / 1e3:g} kb" if self.length >= 2000 else str(t))
-            p.drawText(QPointF(x - 12, b.bottom() + 12), lab)
+            w = fm.horizontalAdvance(lab)
+            xx = min(max(b.left(), x - w / 2), b.right() - w)
+            p.drawText(QPointF(xx, b.bottom() + 13), lab)
+        if redundant:
+            lab = f"{self.length / 1e6:g} Mb" if self.length >= 2_000_000 else f"{self.length / 1e3:g} kb"
+            w = fm.horizontalAdvance(lab)
+            p.drawText(QPointF(b.right() - w, b.bottom() + 13), lab)
         # focus marker (tier 3) and window box (tier 2)
         if self.focus:
             x0, x1 = self._x(self.focus[0]), self._x(self.focus[1])
@@ -152,6 +165,10 @@ class ChromosomeOverview(QWidget):
 
 
 # ======================================================================== tier 2
+MINOR_TYPES = {"misc_feature", "source", "repeat_region", "sts", "variation", "misc_difference",
+               "unsure", "assembly_gap", "gap", "primer_bind", "protein_bind", "misc_binding"}
+
+
 class RegionView(QWidget):
     """Gene models + synteny for the current window; red box = grid's visible columns."""
     windowChanged = Signal(int, int)
@@ -172,6 +189,7 @@ class RegionView(QWidget):
         self.fetch_var = None               # callable(start,end)->list[float] per-ref-position variant freq (or None)
         self.insertions: list[tuple[int, int, int, int]] = []   # (ref_pos, n_cols, n_seqs, first_column)
         self.expanded = False               # show all transcripts
+        self.show_minor = False             # misc_feature / repeat_region / variation etc.
         self.orf_tracks: list[dict] = []     # [{"label","color","items":[(s,e,strand,name,tip[,color])]}]
         self.setMinimumHeight(150)
         self.setMouseTracking(True)
@@ -279,6 +297,8 @@ class RegionView(QWidget):
 
         # gene lanes
         genes = self.ann.overlapping(self.seqid, s, e) if (self.ann and self.seqid) else []
+        if not self.show_minor:
+            genes = [g for g in genes if (g.biotype or "").lower() not in MINOR_TYPES]
         items = []
         for g in genes:
             txs = g.transcripts if self.expanded else [max(g.transcripts, key=lambda t: (len(t.cds), t.end - t.start))] if g.transcripts else []
@@ -540,11 +560,16 @@ class GenomePanel(QWidget):
         self.zoom_in.clicked.connect(lambda: self._zoom(0.5)); self.zoom_out.clicked.connect(lambda: self._zoom(2.0))
         self.expand_cb = QCheckBox("All transcripts")
         self.expand_cb.toggled.connect(self._toggle_expanded)
+        self.minor_cb = QCheckBox("Minor features")
+        self.minor_cb.setToolTip("Also show misc_feature, repeat_region, variation and similar "
+                                 "non-genic annotations (e.g. the rCRS placeholder at 3107)")
+        self.minor_cb.toggled.connect(self._toggle_minor)
         self.open_btn = QToolButton(); self.open_btn.setText("Open region in editor"); self.open_btn.setToolTip("Open the red-box region as a new alignment window with gene features")
         self.open_btn.clicked.connect(lambda: self.openRegionRequested.emit(*self.region.win))
         self.info = QLabel(""); self.info.setMinimumWidth(200)
         bar.addWidget(QLabel("Contig:")); bar.addWidget(self.contig_combo); bar.addWidget(self.region_edit, 1)
-        bar.addWidget(self.zoom_in); bar.addWidget(self.zoom_out); bar.addWidget(self.expand_cb); bar.addWidget(self.open_btn)
+        bar.addWidget(self.zoom_in); bar.addWidget(self.zoom_out); bar.addWidget(self.expand_cb)
+        bar.addWidget(self.minor_cb); bar.addWidget(self.open_btn)
         bar.addWidget(self.info)
         lay.addLayout(bar)
         self.overview = ChromosomeOverview()
@@ -651,6 +676,9 @@ class GenomePanel(QWidget):
 
     def _toggle_expanded(self, on):
         self.region.expanded = on; self.region.update()
+
+    def _toggle_minor(self, on):
+        self.region.show_minor = on; self.region.update()
 
     def _goto_text(self):
         txt = self.region_edit.text().strip().replace(",", "")

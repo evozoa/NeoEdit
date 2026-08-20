@@ -169,3 +169,31 @@ def test_origin_spanning_and_mdp_features():
     hn = [g for gs in ann.genes_by_seq.values() for g in gs if g.name == "humanin"][0]
     assert (hn.start, hn.end, hn.strand) == (2632, 2704, 1)
     assert hn.attrs["transl_table"] == "1"
+
+
+def test_minor_features_hidden_by_default(tmp_path):
+    """A bare misc_feature (e.g. the rCRS placeholder at 3107) is a real annotation
+    but not a gene, so the region view hides it unless asked."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from neoedit.ui.genome_panel import RegionView, MINOR_TYPES
+    from neoedit.genome.annotations import load_genbank
+    HERE = os.path.dirname(__file__)
+    gb = os.path.join(HERE, "..", "examples", "mito", "NC_012920_MDP.gb")
+    if not os.path.exists(gb):
+        import pytest; pytest.skip("rCRS+MDP example not built")
+    ann = load_genbank(gb)
+    misc = [g for gs in ann.genes_by_seq.values() for g in gs if g.biotype == "misc_feature"]
+    assert misc and len(misc[0]) == 1 and misc[0].start == 3106     # rCRS 3107 placeholder
+    assert "misc_feature" in MINOR_TYPES
+    v = RegionView(); v.resize(900, 300)
+    v.length = 16569; v.seqid = misc[0].seqid; v.ann = ann
+    v.set_window(3000, 3200)
+    v.grab()
+    drawn = {g.name for _r, g, _t in v._gene_hits}
+    assert "misc_feature" not in drawn
+    v.show_minor = True
+    v.grab()
+    assert "misc_feature" in {g.name for _r, g, _t in v._gene_hits}
