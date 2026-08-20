@@ -57,6 +57,15 @@ actually use, on a codebase that can keep evolving:
 * **Primer design across an alignment** – conserved (universal) or discriminating
   (eDNA) primers using sequence groups, conservation masking, 3'-weighted mismatch
   scoring, IUPAC-degenerate options and an in-silico PCR table.
+* **Import from NCBI and Ensembl** (`Ctrl+Shift+I`) – fetch GenBank/FASTA records from
+  NCBI Entrez by accession/GI (with sub-range and strand) or by searching Entrez and
+  ticking hits; fetch genes (symbol or stable ID), regions, cDNA/CDS/protein from the
+  Ensembl REST API **pinned to release 116** (archive server first, live server as
+  fallback, with the actual release shown). Ensembl genomic imports are written as GenBank
+  with gene / mRNA / tRNA / rRNA / CDS features built from Ensembl's gene models, so the
+  gene view and the amino-acid line work on them; minus-strand genes can be oriented to
+  their own strand. Downloads are kept as files (default `~/Downloads/NeoEdit`) and appear
+  in *Open recent*.
 * **Restriction sites** – REBASE enzymes (Biopython) with supplier/site-length/ends
   filters; map one sequence, or compare across an alignment to find enzymes that
   *distinguish* sequences; unique cutters, non-cutters, circular molecules, digests,

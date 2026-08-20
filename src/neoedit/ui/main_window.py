@@ -31,6 +31,7 @@ from .dialogs.restriction_dialog import RestrictionDialog
 from .dialogs.misc_dialogs import (FindDialog, StatsDialog, IdentityDialog, PlotDialog, AlignDialog,
                                    PreferencesDialog, NewSequenceDialog)
 from .dialogs.common import TextDialog
+from .dialogs.import_dialog import ImportDialog
 from .. import __version__
 
 FILE_FILTER = ";;".join(
@@ -117,6 +118,8 @@ class MainWindow(QMainWindow):
         self.a_new = A("&New alignment", self.new_alignment, "Ctrl+N")
         self.a_open = A("&Open…", self.open_file, "Ctrl+O")
         self.a_import = A("&Import sequences into current…", self.import_file)
+        self.a_import_remote = A("Import from &NCBI / Ensembl…", self.import_remote, "Ctrl+Shift+I",
+                                 tip="Fetch records from NCBI Entrez or Ensembl (pinned to release 116) by accession, gene, region or search")
         self.a_save = A("&Save", self.save_file, "Ctrl+S")
         self.a_saveas = A("Save &As…", self.save_file_as, "Ctrl+Shift+S")
         self.a_export_sel = A("Export selected sequences…", self.export_selected)
@@ -280,7 +283,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self):
         mb = self.menuBar()
         f = mb.addMenu("&File")
-        for a in (self.a_new, self.a_open, self.a_import, None, self.a_save, self.a_saveas, self.a_export_sel, None):
+        for a in (self.a_new, self.a_open, self.a_import, self.a_import_remote, None, self.a_save, self.a_saveas, self.a_export_sel, None):
             f.addAction(a) if a else f.addSeparator()
         self.recent_menu = f.addMenu("Open &recent")
         f.addSeparator(); f.addAction(self.a_quit)
@@ -577,16 +580,32 @@ class MainWindow(QMainWindow):
 
     def import_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Import sequences", self.settings.value("last_dir", ""), FILE_FILTER)
-        if not path:
-            return
+        if path:
+            self.import_path(path)
+
+    def import_path(self, path: str) -> int:
+        """Append every sequence in `path` to the current alignment; returns the number added."""
         try:
             m = mio.load(path)
         except Exception as e:
-            QMessageBox.critical(self, "Import failed", str(e)); return
+            QMessageBox.critical(self, "Import failed", str(e)); return 0
         self.model.begin_batch("Import")
         for r in m.rows:
             self.model.add_row(r)
         self.model.end_batch()
+        self.statusBar().showMessage(f"Imported {m.nrows} sequence(s) from {path}", 5000)
+        return m.nrows
+
+    def import_remote(self):
+        """Modeless NCBI / Ensembl importer; results come back through open_path / import_path."""
+        dlg = getattr(self, "_import_dialog", None)
+        if dlg is None:
+            def open_new(path):
+                if self._maybe_save():
+                    self.open_path(path)
+            dlg = ImportDialog(self, self.settings, open_new, self.import_path)
+            self._import_dialog = dlg
+        dlg.show(); dlg.raise_(); dlg.activateWindow()
 
     def save_file(self) -> bool:
         if not self.model.path or self.model.format == "genbank" and self.model.nrows > 1:
@@ -723,6 +742,9 @@ class MainWindow(QMainWindow):
         self._children.clear()
         if self.find_dlg is not None:
             self.find_dlg.close()
+        dlg = getattr(self, "_import_dialog", None)
+        if dlg is not None:
+            dlg.close()
         e.accept()
 
     # ------------------------------------------------------------ edit ops
@@ -1672,7 +1694,7 @@ Selection
   Click the ruler           select a column;     Esc clears the selection
 
 Other
-  Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next,
+  Ctrl+Shift+I import from NCBI / Ensembl, Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next,
   Ctrl+Shift+R reverse complement (as in BioEdit; Ctrl+R also works),
   Ctrl+T translation overlay, Ctrl+Shift+T translate, Ctrl+Shift+O ORF finder, Ctrl+Shift+P primer design,
   Ctrl+Shift+X restriction sites, Ctrl+M align with MAFFT
