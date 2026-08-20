@@ -7,6 +7,22 @@
 # WSL penguin. Needs sudo for the system-wide copy.
 set -e
 SRC="$(cd "$(dirname "$0")" && pwd)"
+
+# sudo needs a terminal to prompt. Running this from a non-interactive context
+# (an editor's shell, a hook, `!cmd` in Claude Code) fails with
+# "a terminal is required to read the password".
+if ! sudo -n true 2>/dev/null && [ ! -t 0 ]; then
+  cat >&2 <<'MSG'
+This script needs sudo, and sudo needs a terminal to ask for your password.
+
+Open a WSL/Ubuntu terminal window and run:
+
+    ~/neoedit/install_desktop_entry.sh
+
+(Windows: Start > Ubuntu, or Windows Terminal > Ubuntu tab.)
+MSG
+  exit 1
+fi
 ICONS="$SRC/src/neoedit/resources/icons"
 
 sudo install -Dm644 /dev/stdin /usr/share/applications/neoedit.desktop <<DESKTOP
