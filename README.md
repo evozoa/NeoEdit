@@ -86,6 +86,17 @@ neoedit examples/cox1_demo.fasta
 python -m neoedit
 ```
 
+### Desktop integration (icon in the Start Menu / taskbar)
+
+```bash
+./install_desktop_entry.sh      # needs sudo
+```
+
+On WSL this is what makes Windows show the NeoEdit icon instead of the generic WSL
+penguin: WSLg only indexes `/usr/share/applications`, so a user-level entry in
+`~/.local/share/applications` is ignored. After running it, launch (or pin) NeoEdit
+from the Start Menu entry "NeoEdit (Ubuntu)".
+
 Requires Python ≥ 3.10. MAFFT is optional and found on PATH or set in *Edit ▸ Preferences*
 (`conda install -c bioconda mafft`, `brew install mafft`, or the MAFFT Windows installer).
 
