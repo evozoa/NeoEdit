@@ -73,6 +73,9 @@ class AlignmentModel:
         self.rows: list[SequenceRow] = list(rows or [])
         self.features: list[Feature] = []
         self._seq_type = seq_type
+        self.ref_row: int = 0          # pinned reference: anchors gene models, coordinates and tiers 1-2
+        self.circular: bool = False    # mitogenomes / plasmids
+        self.mask_row: int | None = None   # BioEdit-style analysis mask (positions in/out)
         self.group_colors: dict[str, str] = {}
         self._detected_type = None
         self._undo: list[_Edit] = []
@@ -412,6 +415,35 @@ class AlignmentModel:
     def rna_to_dna(self, rows: Iterable[int]):
         self._transform(rows, lambda s: s.replace("U", "T").replace("u", "t"), "RNA -> DNA")
 
+    # ------------------------------------------------------ reference row
+    MASK_CHARS = set("*-.~ ")
+
+    def is_mask_row(self, row: int) -> bool:
+        """A BioEdit-style mask row contains only mask characters, not residues."""
+        if not (0 <= row < self.nrows):
+            return False
+        s = self.rows[row].seq
+        return bool(s) and set(s) <= self.MASK_CHARS
+
+    def reference(self) -> SequenceRow | None:
+        if 0 <= self.ref_row < self.nrows:
+            return self.rows[self.ref_row]
+        return None
+
+    def set_reference(self, row: int):
+        if 0 <= row < self.nrows and row != self.ref_row:
+            self.ref_row = row
+            self.dirty = True
+            self._emit("reference")
+
+    def _shift_ref(self, removed: list[int]):
+        """Keep the pin on the same sequence when rows are deleted/moved."""
+        r = self.ref_row
+        if r in removed:
+            self.ref_row = max(0, min(r, self.nrows - 1))
+        else:
+            self.ref_row = r - sum(1 for i in removed if i < r)
+
     # ------------------------------------------------------------ groups
     GROUP_PALETTE = ["#2e7d32", "#c62828", "#1565c0", "#f9a825", "#6a1b9a", "#00838f", "#ef6c00", "#4e342e"]
 
@@ -459,6 +491,7 @@ class AlignmentModel:
                 del self.rows[i]
         self._record("Delete sequence", affected, fn)
         self.features = [f for f in self.features if f.row not in idx]
+        self._shift_ref(idx)
 
     def move_rows(self, rows: Iterable[int], delta: int):
         idx = sorted(set(rows))

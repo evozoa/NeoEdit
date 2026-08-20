@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QRect, QPoint, QPointF, Signal, QTimer
-from PySide6.QtGui import (QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QKeyEvent,
+from PySide6.QtGui import (QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QKeyEvent, QPolygonF,
                            QMouseEvent, QWheelEvent, QPalette)
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QMenu, QInputDialog, QToolButton
 
@@ -461,6 +461,12 @@ class AlignmentView(QAbstractScrollArea):
             p.fillRect(0, y, grid_left - 1, self.row_h,
                        pal.color(QPalette.Highlight) if r in self.sel_rows else pal.color(QPalette.Window))
             name_x = 4
+            if r == m.ref_row and m.nrows > 1:
+                # pinned reference: small triangle marker
+                p.setPen(Qt.NoPen); p.setBrush(QColor("#e00000"))
+                p.drawPolygon(QPolygonF([QPointF(name_x + 1, y + 3), QPointF(name_x + 1, y + self.cell_h - 3),
+                                         QPointF(name_x + 6, y + self.cell_h / 2)]))
+                name_x += 9
             if row.group:
                 gcol = QColor(m.group_color(row.group))
                 p.fillRect(0, y, 5, self.row_h, gcol)
@@ -694,7 +700,9 @@ class AlignmentView(QAbstractScrollArea):
         if 0 <= row < self.model.nrows and pos.x() < self.name_w:
             g = self.model.rows[row].group
             d = self.model.rows[row].description
-            tip = "\n".join(x for x in (self.model.rows[row].name, f"group: {g}" if g else "", d) if x)
+            tip = "\n".join(x for x in (self.model.rows[row].name,
+                                        "pinned reference" if row == self.model.ref_row and self.model.nrows > 1 else "",
+                                        f"group: {g}" if g else "", d) if x)
             self.setToolTip(tip)
             return
         # hover: feature tooltip

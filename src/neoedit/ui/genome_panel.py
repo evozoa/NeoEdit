@@ -157,6 +157,7 @@ class RegionView(QWidget):
     windowChanged = Signal(int, int)
     focusRequested = Signal(int, int)       # user clicked: scroll grid to show (start,end)
     geneActivated = Signal(object)           # double-click gene
+    insertionClicked = Signal(int, int)      # alignment columns of an insertion
     hoverInfo = Signal(str)
 
     def __init__(self, parent=None):
@@ -169,6 +170,7 @@ class RegionView(QWidget):
         self.synteny: list[SyntenyBlock] = []
         self.fetch_seq = None               # callable(start,end)->str for base-level drawing
         self.fetch_var = None               # callable(start,end)->list[float] per-ref-position variant freq (or None)
+        self.insertions: list[tuple[int, int, int, int]] = []   # (ref_pos, n_cols, n_seqs, first_column)
         self.expanded = False               # show all transcripts
         self.orf_tracks: list[dict] = []     # [{"label":str,"color":str,"items":[(s,e,strand,name,tip)]}]
         self.setMinimumHeight(150)
@@ -177,6 +179,7 @@ class RegionView(QWidget):
         self._gene_hits: list[tuple[QRectF, Gene, Transcript]] = []
         self._syn_hits: list[tuple[QRectF, SyntenyBlock]] = []
         self._orf_hits: list[tuple[QRectF, str, str]] = []
+        self._ins_hits: list[tuple[QRectF, tuple]] = []
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     # --------------------------------------------------------------- state
@@ -206,7 +209,7 @@ class RegionView(QWidget):
         W, H = self.width(), self.height()
         s, e = self.win
         left, right = 40, W - 8
-        self._gene_hits.clear(); self._syn_hits.clear(); self._orf_hits.clear()
+        self._gene_hits.clear(); self._syn_hits.clear(); self._orf_hits.clear(); self._ins_hits.clear()
         f = self.font(); f.setPointSize(8); p.setFont(f); fm = QFontMetrics(f)
 
         # ruler
@@ -240,6 +243,21 @@ class RegionView(QWidget):
         elif self.fetch_seq and bpp <= 1:
             # GC-ish density strip? keep simple: thin line indicating sequence present
             p.fillRect(QRectF(left, y + 3, right - left, 3), QColor("#ddd")); y += 10
+
+        # insertion carets: sequence the tracks have but the reference lacks
+        if self.insertions:
+            cy = y + 6
+            for (rpos, ncols, nseq, col0) in self.insertions:
+                if not (s <= rpos <= e):
+                    continue
+                x = self._x(rpos)
+                w = 3 + min(4.0, ncols / 3.0)
+                tri = QPolygonF([QPointF(x - w, cy + 6), QPointF(x + w, cy + 6), QPointF(x, cy - 2)])
+                p.setPen(QPen(QColor("#b45309"), 1)); p.setBrush(QColor("#f59e0b"))
+                p.drawPolygon(tri)
+                self._ins_hits.append((QRectF(x - w - 2, cy - 3, 2 * w + 4, 11), (rpos, ncols, nseq, col0)))
+            p.setPen(QColor("#666")); p.drawText(QPointF(2, cy + 6), "ins")
+            y = cy + 10
 
         # variation track (population alignment in the grid)
         if self.fetch_var is not None:
@@ -425,6 +443,15 @@ class RegionView(QWidget):
             QToolTip.showText(QCursor.pos(), info, self)
             self.hoverInfo.emit(f"{g.name}  {g.seqid}:{fmt_bp(g.start + 1)}-{fmt_bp(g.end)} ({'+' if g.strand > 0 else '-'})")
             return
+        for r, ins in self._ins_hits:
+            if r.contains(pos):
+                rpos, ncols, nseq, col0 = ins
+                QToolTip.showText(QCursor.pos(),
+                                  f"<b>Insertion</b> after reference position {fmt_bp(rpos)}<br>"
+                                  f"{ncols} column(s) absent from the reference, present in {nseq} sequence(s)<br>"
+                                  f"<i>click to read the inserted bases in the alignment</i>", self)
+                self.setCursor(Qt.PointingHandCursor)
+                return
         for r, nm, tip in self._orf_hits:
             if r.contains(pos):
                 QToolTip.showText(QCursor.pos(), tip, self)
@@ -441,6 +468,11 @@ class RegionView(QWidget):
     def mouseReleaseEvent(self, e):
         if self._drag and not self._drag[2] and e.button() == Qt.LeftButton:
             # click (no drag): scroll the grid here
+            for r, ins in self._ins_hits:
+                if r.contains(e.position()):
+                    self.insertionClicked.emit(ins[3], ins[3] + ins[1])
+                    self._drag = None
+                    return
             h = self._hit(e.position())
             if h:
                 g, t = h
@@ -481,6 +513,7 @@ class GenomePanel(QWidget):
     contigSelected = Signal(str)            # user picked a contig
     focusRequested = Signal(int, int)       # scroll grid to region
     geneActivated = Signal(object)
+    insertionClicked = Signal(int, int)     # alignment columns (not reference coords)
     openRegionRequested = Signal(int, int)  # "open region in new editor window"
 
     def __init__(self, parent=None):
@@ -515,6 +548,7 @@ class GenomePanel(QWidget):
         self.region.focusRequested.connect(self.focusRequested)
         self.region.geneActivated.connect(self.geneActivated)
         self.region.hoverInfo.connect(self.info.setText)
+        self.region.insertionClicked.connect(self.insertionClicked)
 
     # ------------------------------------------------------------ API
     def set_contigs(self, contigs: list[tuple[str, int]], current: str | None = None):
@@ -539,6 +573,10 @@ class GenomePanel(QWidget):
     def set_annotation(self, ann: Optional[Annotation]):
         self.ann = ann; self.region.ann = ann
         self._update_density()
+        self.region.update()
+
+    def set_insertions(self, ins: list[tuple[int, int, int, int]]):
+        self.region.insertions = ins
         self.region.update()
 
     def add_orf_track(self, label: str, items: list[tuple[int, int, int, str, str]], color: str = "#7d3c98",

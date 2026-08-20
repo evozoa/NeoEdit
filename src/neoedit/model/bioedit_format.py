@@ -125,7 +125,12 @@ def _seq_type_code(seq_type: str) -> str:
 
 def write_bio(path: str, rows: list[SequenceRow], seq_type: str = "dna",
               mask_index: int = -1, numbering_index: int = -1, magic: bytes = DEFAULT_MAGIC):
-    """Write a BioEdit Project file laid out like the ones BioEdit 7.x writes."""
+    """Write a BioEdit Project file laid out like the ones BioEdit 7.x writes.
+
+    `numbering_index` is BioEdit's numbering mask: the row whose own residue numbering
+    is used to report positions. NeoEdit stores its pinned reference row there, which
+    is the same idea (see the "Using Masks" section of the BioEdit manual).
+    """
     n = len(rows)
     header = bytearray(HEADER_SIZE)
     header[0:len(magic)] = magic

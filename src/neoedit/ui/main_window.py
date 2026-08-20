@@ -59,6 +59,7 @@ class MainWindow(QMainWindow):
         self.genome: IndexedFasta | None = None
         self.genome_contig: str | None = None
         self._proj: RefProjection | None = None
+        self._proj_row: int = -1
         self._ref_ungapped: str | None = None
         self.annotation: GA.Annotation | None = None
         self.synteny_blocks: list = []
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
         self.genome_panel.focusRequested.connect(self._genome_focus)
         self.genome_panel.geneActivated.connect(self._genome_open_gene)
         self.genome_panel.openRegionRequested.connect(self._genome_open_region)
+        self.genome_panel.insertionClicked.connect(self._goto_columns)
         self.view.horizontalScrollBar().valueChanged.connect(self._grid_scrolled)
         self.view.horizontalScrollBar().rangeChanged.connect(lambda *_: self._grid_scrolled())
         self.find_dlg = None
@@ -209,6 +211,10 @@ class MainWindow(QMainWindow):
         self.a_up = A("Move sequence(s) &up", lambda: self._move(-1), "Ctrl+Up")
         self.a_down = A("Move sequence(s) &down", lambda: self._move(1), "Ctrl+Down")
         self.a_settype = A("Set sequence type…", self.set_type)
+        self.a_pin = A("&Pin as reference", self.pin_reference, "Ctrl+Shift+E",
+                       tip="Anchor the gene models, chromosome map and coordinates to this sequence")
+        self.a_circular = A("&Circular molecule", self._toggle_circular, None, True,
+                            tip="Treat the sequence as circular (mitogenome, plasmid)")
         self.a_grp_set = A("&Assign selected to group…", self.group_assign, "Ctrl+Shift+A")
         self.a_grp_clear = A("&Remove selected from group", lambda: self.model.set_group(self.view.target_rows(), ""))
         self.a_grp_color = A("Set group &color…", self.group_color)
@@ -306,7 +312,7 @@ class MainWindow(QMainWindow):
         self.group_menu.aboutToShow.connect(self._fill_group_menu)
         for a in (self.a_newseq, self.a_rename, self.a_delseq, self.a_dupseq, self.a_up, self.a_down, None,
                   self.a_revcomp, self.a_rev, self.a_comp, self.a_upper, self.a_lower, self.a_rmgaps, self.a_rna, self.a_dna, None,
-                  self.a_translate, self.a_sixframe, None, self.a_settype, self.a_blast):
+                  self.a_translate, self.a_sixframe, None, self.a_pin, self.a_settype, self.a_circular, self.a_blast):
             s.addAction(a) if a else s.addSeparator()
         s.addSeparator(); s.addMenu(self.group_menu)
 
@@ -363,6 +369,7 @@ class MainWindow(QMainWindow):
 
     def _context_menu(self, pos):
         m = QMenu(self)
+        m.addAction(self.a_pin)
         m.addMenu(self.group_menu)
         m.addSeparator()
         for a in (self.a_copy, self.a_paste, None, self.a_revcomp, self.a_translate, self.a_rmgaps, None,
@@ -439,6 +446,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ status
     def _update_status(self, *_):
         m, v = self.model, self.view
+        if hasattr(self, "a_circular"):
+            self.a_circular.blockSignals(True); self.a_circular.setChecked(bool(m.circular)); self.a_circular.blockSignals(False)
         if m.nrows:
             r, c = v.cur_row, v.cur_col
             seq = m.rows[r].seq
@@ -466,6 +475,8 @@ class MainWindow(QMainWindow):
 
     def _on_model(self, what):
         self._proj = None
+        self._proj_row = -1
+        self._ins_dirty = True
         self._ref_ungapped = None
         self._update_status()
         if what == "type":
@@ -914,6 +925,21 @@ class MainWindow(QMainWindow):
             self.view.selectionChanged.emit()
             self.view.viewport().update()
 
+    def pin_reference(self):
+        if not self.model.nrows:
+            return
+        row = self.view.cur_row
+        self.model.set_reference(row)
+        self._proj = None; self._proj_row = -1; self._ref_ungapped = None
+        if self.genome_panel.isVisible() or self.genome_contig:
+            self._enter_reference_mode(self.annotation)
+        self.view.viewport().update()
+        self.statusBar().showMessage(f"Pinned {self.model.rows[row].name} as the reference sequence", 5000)
+
+    def _toggle_circular(self, on):
+        self.model.circular = on
+        self.view.viewport().update()
+
     def set_type(self):
         s, ok = QInputDialog.getItem(self, "Sequence type", "Type:", ["auto", "dna", "rna", "protein"], 0, False)
         if ok:
@@ -1062,7 +1088,7 @@ class MainWindow(QMainWindow):
         """Show ORF-finder results as their own track under the gene models."""
         if not self.genome_panel.isVisible() and not orfs:
             return
-        ref_row = 0
+        ref_row = self.ref_index()
         proj = self.proj()
         items = []
         for o in orfs:
@@ -1123,15 +1149,59 @@ class MainWindow(QMainWindow):
         if on:
             self.splitter.setSizes([260, max(200, self.height() - 260)])
 
+    def ref_index(self) -> int:
+        r = self.model.ref_row
+        return r if 0 <= r < self.model.nrows else 0
+
+    def ref_seq(self) -> str:
+        return self.model.rows[self.ref_index()].seq if self.model.nrows else ""
+
     def proj(self) -> RefProjection:
-        if self._proj is None or self._proj.ncols != (len(self.model.rows[0].seq) if self.model.nrows else 0):
-            self._proj = RefProjection(self.model.rows[0].seq if self.model.nrows else "")
+        seq = self.ref_seq()
+        if self._proj is None or self._proj.ncols != len(seq) or self._proj_row != self.ref_index():
+            self._proj = RefProjection(seq)
+            self._proj_row = self.ref_index()
+            self._ref_ungapped = None
         return self._proj
 
     def ref_ungapped(self) -> str:
         if self._ref_ungapped is None:
-            self._ref_ungapped = self.model.rows[0].ungapped() if self.model.nrows else ""
+            self._ref_ungapped = self.model.rows[self.ref_index()].ungapped() if self.model.nrows else ""
         return self._ref_ungapped
+
+    def insertion_carets(self) -> list[tuple[int, int, int, int]]:
+        """Insertions the tracks have but the reference lacks.
+
+        Returns (ref_position, n_columns, n_sequences, first_column) for each run of
+        columns where the reference is gapped but other sequences carry residues.
+        """
+        m = self.model
+        if m.nrows < 2:
+            return []
+        proj = self.proj()
+        gaps = proj.gap_cols
+        if not gaps:
+            return []
+        runs = []
+        start = prev = gaps[0]
+        for c in gaps[1:]:
+            if c != prev + 1:
+                runs.append((start, prev + 1)); start = c
+            prev = c
+        runs.append((start, prev + 1))
+        out = []
+        ri = self.ref_index()
+        for a, b in runs:
+            n = 0
+            for i, r in enumerate(m.rows):
+                if i == ri:
+                    continue
+                seg = r.seq[a:b]
+                if any(ch not in "-.~" for ch in seg):
+                    n += 1
+            if n:
+                out.append((proj.col_to_ref(a), b - a, n, a))
+        return out
 
     def genome_open(self):
         if not self._maybe_save():
@@ -1201,7 +1271,7 @@ class MainWindow(QMainWindow):
         """Use row 0 of the current model as the reference for the genome panel."""
         if not self.model.nrows:
             return
-        seqid = self.model.rows[0].name
+        seqid = self.model.rows[self.ref_index()].name
         self.genome_contig = seqid
         self.annotation = ann
         L = self.proj().ref_len
@@ -1209,6 +1279,7 @@ class MainWindow(QMainWindow):
         self.genome_panel.set_contig(seqid, L, fetch_seq=lambda s, e: self.ref_ungapped()[s:e])
         self.genome_panel.region.fetch_var = self._variation
         self.genome_panel.set_annotation(ann)
+        self.genome_panel.set_insertions(self.insertion_carets())
         self.view.feature_provider = self._genome_features
         self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
         self.genome_panel.set_window(0, min(L, max(2000, L)))
@@ -1268,7 +1339,7 @@ class MainWindow(QMainWindow):
             return None
         proj = self.proj()
         c0, c1 = proj.span_to_cols(s, e)
-        ref = m.rows[0].seq
+        ref = self.ref_seq()
         out = [0.0] * (e - s)
         u = s
         for c in range(c0, min(c1, len(ref))):
@@ -1277,7 +1348,7 @@ class MainWindow(QMainWindow):
                 continue
             rc = rc.upper()
             tot = mis = 0
-            for r in m.rows[1:]:
+            for r in (row for i, row in enumerate(m.rows) if i != self.ref_index()):
                 ch = r.seq[c].upper() if c < len(r.seq) else ""
                 if ch and ch not in "-.~N":
                     tot += 1
@@ -1371,7 +1442,13 @@ class MainWindow(QMainWindow):
         self.a_g_panel.setChecked(False); self.genome_panel.hide()
         self.view.viewport().update()
 
+    def _refresh_insertions(self):
+        if getattr(self, "_ins_dirty", False) and self.genome_panel.isVisible():
+            self.genome_panel.set_insertions(self.insertion_carets())
+            self._ins_dirty = False
+
     def _grid_scrolled(self, *_):
+        self._refresh_insertions()
         if not self.genome_panel.isVisible() and getattr(self, "_circ", None) is None:
             return
         if not self.genome_panel.isVisible():
@@ -1396,6 +1473,16 @@ class MainWindow(QMainWindow):
             except RuntimeError:
                 self._circ = None
 
+    def _goto_columns(self, c0: int, c1: int):
+        """Scroll the grid to alignment columns (used by insertion carets)."""
+        vis = self.view._visible_cols()
+        start = max(0, (c0 + c1) // 2 - vis // 2)
+        self.view.horizontalScrollBar().setValue(start)
+        if self.model.nrows:
+            self.view.select_region(0, self.model.nrows - 1, c0, max(c0, c1 - 1))
+        self.statusBar().showMessage(f"Insertion at alignment columns {c0 + 1:,}-{c1:,} "
+                                     f"(absent from {self.model.rows[self.ref_index()].name})", 6000)
+
     def _genome_focus(self, s: int, e: int):
         """Scroll/center the grid on reference span [s,e)."""
         proj = self.proj()
@@ -1404,12 +1491,12 @@ class MainWindow(QMainWindow):
         start = max(0, (c0 + c1) // 2 - vis // 2) if c1 - c0 < vis else c0
         self.view.horizontalScrollBar().setValue(start)
         if self.model.nrows:
-            self.view.set_cursor(0, c0)
+            self.view.set_cursor(self.ref_index(), c0)
             self.view.horizontalScrollBar().setValue(start)
 
     def _genome_features(self, row: int, c0: int, c1: int):
         """Feature provider for the grid: gene models of the genome row as CDS/exon features."""
-        if row != 0 or not self.annotation or not self.genome_contig:
+        if row != self.ref_index() or not self.annotation or not self.genome_contig:
             return []
         proj = self.proj()
         u0, u1 = proj.col_to_ref(c0), proj.col_to_ref(c1) + 1
@@ -1425,12 +1512,12 @@ class MainWindow(QMainWindow):
             for a, b, kind in segs:
                 if b > u0 and a < u1:
                     ca, cb = P(a, b)
-                    out.append(Feature(0, ca, cb, g.strand, kind, f"{g.name} {kind}", col))
+                    out.append(Feature(row, ca, cb, g.strand, kind, f"{g.name} {kind}", col))
             if t.cds:
                 for a, b in t.utrs():
                     if b > u0 and a < u1:
                         ca, cb = P(a, b)
-                        out.append(Feature(0, ca, cb, g.strand, "UTR", f"{g.name} UTR", "#9aa8c7" if g.strand > 0 else "#d9a59c"))
+                        out.append(Feature(row, ca, cb, g.strand, "UTR", f"{g.name} UTR", "#9aa8c7" if g.strand > 0 else "#d9a59c"))
         return out
 
     def _region_features(self, seqid: str, s: int, e: int) -> list:
@@ -1453,9 +1540,9 @@ class MainWindow(QMainWindow):
     def _genome_open_region(self, s: int, e: int):
         if not self.model.nrows:
             return
-        seqid = self.genome_contig or self.model.rows[0].name
+        seqid = self.genome_contig or self.model.rows[self.ref_index()].name
         c0, c1 = self.proj().span_to_cols(s, e)
-        seq = self.model.rows[0].seq[c0:c1]
+        seq = self.ref_seq()[c0:c1]
         m = AlignmentModel([SequenceRow(f"{seqid}:{s + 1}-{e}", seq)], "dna")
         m.features = self._region_features(seqid, s, e)
         m.dirty = False

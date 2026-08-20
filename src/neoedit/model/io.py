@@ -83,7 +83,11 @@ def _rows_from_records(records) -> list[SequenceRow]:
 def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
     fmt = fmt or guess_format(path)
     if fmt == "bio":
-        rows = _read_bio(path)
+        rows, bio_info = _read_bio(path), None
+        try:
+            _rows2, bio_info = BIO.read_bio(path)
+        except Exception:
+            bio_info = None
     elif fmt == "genbank-bioedit":
         rows = BIO.read_genbank_bioedit(path)
         if not rows:
@@ -105,6 +109,24 @@ def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
     model.path = path
     model.format = fmt
     model.dirty = False
+    if fmt == "bio" and bio_info:
+        # BioEdit's numbering mask designates the sequence whose numbering is used:
+        # that is our pinned reference, unless it points at a synthetic mask row.
+        ni = bio_info.get("numbering_index", -1)
+        if 0 <= ni < model.nrows and not model.is_mask_row(ni):
+            model.ref_row = ni
+        mi = bio_info.get("mask_index", -1)
+        if 0 <= mi < model.nrows:
+            model.mask_row = mi
+    if fmt in ("genbank", "embl"):
+        try:
+            with open(path, "r", errors="replace") as fh:
+                for rec in SeqIO.parse(fh, fmt):
+                    if str(rec.annotations.get("topology", "")).lower() == "circular":
+                        model.circular = True
+                    break
+        except Exception:
+            pass
     # hoist GenBank/EMBL features into the model
     if fmt in ("genbank", "embl"):
         from .alignment import Feature
@@ -171,7 +193,9 @@ def save(model: AlignmentModel, path: str, fmt: Optional[str] = None):
     fmt = fmt or model.format or (guess_format(path) if os.path.exists(path) else
                                   EXT_TO_FORMAT.get(os.path.splitext(path)[1].lower(), "fasta"))
     if fmt == "bio":
-        BIO.write_bio(path, model.rows, model.seq_type)
+        BIO.write_bio(path, model.rows, model.seq_type,
+                      mask_index=model.mask_row if model.mask_row is not None else -1,
+                      numbering_index=model.ref_row if model.nrows > 1 else -1)
     else:
         text = dumps(model, fmt)
         with open(path, "w") as fh:

@@ -31,6 +31,11 @@ actually use, on a codebase that can keep evolving:
   selection, size/Tm/GC constraints, salt/Mg/dNTP, hairpin/dimer metrics, primers
   drawn as features, mismatch check of each primer against every sequence in the
   alignment (for conserved-site design), CSV/FASTA export.
+* **Pinned reference** – any sequence can be pinned (Ctrl+Shift+E) to anchor the
+  chromosome map, gene models and coordinates, so all three tiers always agree; the
+  pin is stored in `.bio` files as BioEdit's numbering-mask slot. Insertions the other
+  sequences carry but the reference lacks appear as clickable carets that jump the
+  grid to the inserted bases.
 * **Genome context** – three synced tiers: contig/chromosome overview, gene-model
   and synteny region view (GFF3/GTF/BED/GenBank + PAF), and the alignment grid;
   indexed FASTA so whole chromosomes open instantly. GenBank references (mitogenome/
