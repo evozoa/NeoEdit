@@ -245,17 +245,21 @@ def test_import_dialog_wiring(tmp_path):
     # a finished fetch hands the file to the main window: "add" appends rows, "open" replaces the alignment
     example = os.path.join(HERE, "..", "examples", "cox1_demo.fasta")
     dlg.r_add.setChecked(True)
+    dlg.n_ids.setPlainText("NC_012920.1")
     dlg._fetched((example, "done"))
     assert w.model.nrows == 5
+    assert not dlg.isVisible() and dlg.n_ids.toPlainText() == ""     # closes and clears after a successful import
+    dlg.show()
     dlg._fetched((example, "done"))
     assert w.model.nrows == 10
+    dlg.show()
     w.model.dirty = False
     gbp = os.path.join(HERE, "..", "examples", "mito", "NC_012920_MDP.gb")
     if os.path.exists(gbp):
         dlg._fetched((gbp, "done"))                   # still "add": GenBank features come along, re-homed to row 10
         assert w.model.nrows == 11 and w.model.features and all(f.row == 10 for f in w.model.features)
         w.model.dirty = False
-        dlg.r_open.setChecked(True)
+        dlg.show(); dlg.r_open.setChecked(True)
         # replacing a non-empty alignment asks first; auto-answer Yes
         from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QMessageBox

@@ -501,3 +501,9 @@ class ImportDialog(QDialog):
                 self.on_open(path)
         except Exception as e:   # noqa: BLE001
             QMessageBox.critical(self, "Import", f"Downloaded to {path}, but it could not be opened:\n{e}")
+            return
+        # done: clear the one-shot inputs so the next import starts clean, and get out of the way
+        self.n_ids.clear(); self.n_from.setValue(0); self.n_to.setValue(0)
+        self._check_all(False)
+        self.e_gene.clear(); self.e_region.clear(); self.e_info.clear()
+        self.close()
