@@ -82,7 +82,7 @@ class AlignmentView(QAbstractScrollArea):
         self.identity_ref = "consensus"   # consensus | first
         self.identity_color = "#000000"   # BioEdit shades identities black (white letters)
         self.dots_for_identity = False
-        self.show_consensus = True
+        self.show_reference = True      # pinned reference row above the grid (the row the map/gene models follow)
         self.show_translation = False
         self.trans_frame = 0            # 0-2 = +1..+3, 3-5 = -1..-3
         self.trans_table = 1
@@ -219,7 +219,16 @@ class AlignmentView(QAbstractScrollArea):
 
     @property
     def header_h(self) -> int:
-        return self.ruler_h + (self.cell_h if self.show_consensus else 0)
+        return self.ruler_h + (self.cell_h if self.pinned_row() >= 0 else 0)
+
+    def pinned_row(self) -> int:
+        """Index of the reference row shown in the header strip, or -1 when the strip is hidden
+        (toggled off, or fewer than two sequences — a lone row needs no copy of itself)."""
+        m = self.model
+        if not self.show_reference or m.nrows < 2:
+            return -1
+        r = m.ref_row
+        return r if 0 <= r < m.nrows else 0
 
     def _update_scrollbars(self):
         vp = self.viewport()
@@ -415,7 +424,7 @@ class AlignmentView(QAbstractScrollArea):
         c0, c1 = hs, min(m.width, hs + ncols)
         r0, r1 = vs, min(m.nrows, vs + nrows)
         sel = self.selection()
-        need_cons = self.show_consensus or (self.color_mode == "identity" and self.identity_ref == "consensus") or self.dots_for_identity
+        need_cons = (self.color_mode == "identity" and self.identity_ref == "consensus") or self.dots_for_identity
         if need_cons:
             cons_vis = {c: self.consensus_at(c) for c in range(c0, c1)}
         else:
@@ -441,15 +450,21 @@ class AlignmentView(QAbstractScrollArea):
                 p.drawText(x + self.cell_w // 2 - tw // 2, self.ruler_h - 8, str(n))
             elif n % 5 == 0:
                 p.drawLine(x + self.cell_w // 2, self.ruler_h - 4, x + self.cell_w // 2, self.ruler_h - 1)
-        # --- consensus row
-        if self.show_consensus:
+        # --- pinned reference row (stays put while the grid scrolls; same colors as in the grid)
+        pr = self.pinned_row()
+        if pr >= 0:
             y = self.ruler_h
+            row = m.rows[pr]
+            p.setPen(Qt.NoPen); p.setBrush(QColor("#e00000"))
+            p.drawPolygon(QPolygonF([QPointF(5, y + 3), QPointF(5, y + self.cell_h - 3), QPointF(10, y + self.cell_h / 2)]))
             p.setPen(fg)
-            p.drawText(4, y + self._ty, "Consensus")
+            p.drawText(13, y + self._ty, self._fm.elidedText(row.name, Qt.ElideRight, grid_left - 17))
+            seq = row.seq
             for c in range(c0, c1):
-                ch = cons_vis.get(c, "")
+                ch = seq[c] if c < len(seq) else ""
                 x = grid_left + (c - hs) * self.cell_w
-                self._draw_cell(p, x, y, ch, None, fg, False)
+                self._draw_cell(p, x, y, ch, self._cell_color(ch, c, ref_seq), fg, False,
+                                force_bg=(self.color_mode == "identity"))
         p.setPen(QPen(pal.color(QPalette.Mid)))
         p.drawLine(0, self.header_h - 1, W, self.header_h - 1)
         p.drawLine(grid_left - 1, 0, grid_left - 1, H)
@@ -631,6 +646,18 @@ class AlignmentView(QAbstractScrollArea):
             return
         row, col = self.cell_at(pos)
         self._press_pos = pos
+        if row < 0 and pos.y() >= self.ruler_h and self.pinned_row() >= 0:
+            # pinned reference strip: jump to the reference row (name) or to that cell (grid)
+            pr = self.pinned_row()
+            if pos.x() < self.name_w:
+                self.sel_rows = {pr}; self.anchor = None; self.cur_row = pr
+                self.ensure_visible(pr, None)
+                self.cursorChanged.emit(self.cur_row, self.cur_col); self.selectionChanged.emit()
+                self.viewport().update()
+            else:
+                self.select_region(pr, pr, col, col)
+                self.ensure_visible(pr, col)
+            return
         if pos.x() < self.name_w:
             # name panel: row selection
             if row < 0 or row >= self.model.nrows:

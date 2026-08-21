@@ -29,7 +29,7 @@ from .dialogs.primer_dialog import PrimerDialog
 from .dialogs.design_dialog import DesignDialog
 from .dialogs.restriction_dialog import RestrictionDialog
 from .dialogs.misc_dialogs import (FindDialog, StatsDialog, IdentityDialog, PlotDialog, AlignDialog,
-                                   PreferencesDialog, NewSequenceDialog)
+                                   PreferencesDialog, NewSequenceDialog, ConsensusDialog)
 from .dialogs.common import TextDialog
 from .dialogs.import_dialog import ImportDialog
 from .. import __version__
@@ -169,7 +169,9 @@ class MainWindow(QMainWindow):
         self.a_row_less = A("Decrease line spacing", lambda: self.view.set_spacing(row_pad=self.view.row_pad - 1), "Ctrl+Shift+Down")
         self.a_col_more = A("Increase &character spacing", lambda: self.view.set_spacing(col_pad=self.view.col_pad + 1), "Ctrl+Shift+Right")
         self.a_col_less = A("Decrease character spacing", lambda: self.view.set_spacing(col_pad=self.view.col_pad - 1), "Ctrl+Shift+Left")
-        self.a_consensus = A("Show &consensus", self._toggle_consensus, None, True); self.a_consensus.setChecked(True)
+        self.a_pinned_ref = A("Show pinned &reference row", self._toggle_pinned_ref, None, True,
+                              tip="Keep the reference sequence (the row the chromosome map and gene models follow) visible above the grid")
+        self.a_pinned_ref.setChecked(True)
         self.a_translation = A("Show &translation under DNA", self._toggle_translation, "Ctrl+T", True)
         self.a_features = A("Show &features", self._toggle_features, None, True); self.a_features.setChecked(True)
         self.a_shade_feat = A("Shade feature &regions", self._toggle_shade_features, None, True,
@@ -197,7 +199,7 @@ class MainWindow(QMainWindow):
         self.a_ref_first = A("…relative to first sequence", lambda: self._set_ref("first"), None, True)
         self.ref_group.addAction(self.a_ref_cons); self.ref_group.addAction(self.a_ref_first)
         self.a_ref_cons.setChecked(True)
-        self.a_threshold = A("Consensus threshold…", self._set_threshold)
+        self.a_threshold = A("Consensus threshold (identity coloring)…", self._set_threshold)
 
         # sequence ops
         self.a_revcomp = A("&Reverse complement", lambda: self.model.reverse_complement(self.view.target_rows()),
@@ -245,7 +247,8 @@ class MainWindow(QMainWindow):
         self.a_stats = A("Sequence &statistics", self.stats)
         self.a_ident = A("&Identity matrix", self.identity)
         self.a_plot = A("&Conservation / entropy plot", self.plot)
-        self.a_cons_report = A("Consensus sequence report", self.consensus_report)
+        self.a_consensus = A("&Consensus sequence…", self.consensus_tool,
+                             tip="Majority or IUPAC-degenerate consensus of all or selected sequences; add it as a row, copy or save it")
 
         self.a_about = A("&About", self.about)
 
@@ -295,7 +298,7 @@ class MainWindow(QMainWindow):
             e.addAction(a) if a else e.addSeparator()
 
         v = mb.addMenu("&View")
-        for a in (self.a_zoom_in, self.a_zoom_out, self.a_font, self.a_crisp, None, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None, self.a_consensus, self.a_translation, self.a_features, self.a_shade_feat, self.a_dock, None):
+        for a in (self.a_zoom_in, self.a_zoom_out, self.a_font, self.a_crisp, None, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None, self.a_pinned_ref, self.a_translation, self.a_features, self.a_shade_feat, self.a_dock, None):
             v.addAction(a) if a else v.addSeparator()
         wm = v.addMenu("Text &weight")
         for a in (self.a_w_reg, self.a_w_semi, self.a_w_bold):
@@ -335,11 +338,11 @@ class MainWindow(QMainWindow):
         s.addSeparator(); s.addMenu(self.group_menu)
 
         al = mb.addMenu("&Alignment")
-        for a in (self.a_align, None, self.a_insgapcol, self.a_delgapcol, self.a_rm_gapcols, self.a_pad, None, self.a_extract):
+        for a in (self.a_align, None, self.a_insgapcol, self.a_delgapcol, self.a_rm_gapcols, self.a_pad, None, self.a_consensus, self.a_extract):
             al.addAction(a) if a else al.addSeparator()
 
         an = mb.addMenu("A&nalysis")
-        for a in (self.a_orf, self.a_primer, self.a_design, self.a_restrict, None, self.a_stats, self.a_ident, self.a_plot, self.a_cons_report):
+        for a in (self.a_orf, self.a_primer, self.a_design, self.a_restrict, None, self.a_stats, self.a_ident, self.a_plot):
             an.addAction(a) if a else an.addSeparator()
 
         gm = mb.addMenu("&Genome")
@@ -851,8 +854,8 @@ class MainWindow(QMainWindow):
         PreferencesDialog(self.settings, self).exec()
 
     # ------------------------------------------------------------ view ops
-    def _toggle_consensus(self, on):
-        self.view.show_consensus = on; self.view._refresh()
+    def _toggle_pinned_ref(self, on):
+        self.view.show_reference = on; self.view._refresh()
 
     def _toggle_translation(self, on):
         self.view.show_translation = on; self.view._refresh()
@@ -1229,9 +1232,10 @@ class MainWindow(QMainWindow):
             rows = self.view.target_rows()
             PlotDialog(self.model, rows if len(rows) > 1 else range(self.model.nrows), self).exec()
 
-    def consensus_report(self):
-        if self.model.nrows:
-            TextDialog(self, "Consensus", f">consensus\n{self.view.consensus()}\n").exec()
+    def consensus_tool(self):
+        if not self.model.nrows:
+            QMessageBox.information(self, "Consensus", "Open an alignment first."); return
+        ConsensusDialog(self.model, self.view.target_rows(), self.view.shade_threshold, self).exec()
 
     # ------------------------------------------------------------ genome
     def _toggle_genome_panel(self, on):

@@ -186,3 +186,43 @@ def test_bioedit_shortcuts(app):
     assert [w.model.rows[r].seq for r in rows] == rc
     QTest.keyClick(w.view, Qt.Key_R, Qt.ControlModifier); app.processEvents()   # alias undoes it again
     assert [w.model.rows[r].seq for r in rows] == seqs
+
+
+def test_pinned_reference_strip_and_consensus_tool(app):
+    """The header strip shows the pinned reference (not a consensus); the consensus is a tool."""
+    from neoedit.ui.main_window import MainWindow
+    from neoedit.ui.dialogs.misc_dialogs import ConsensusDialog
+    from neoedit.model import AlignmentModel, SequenceRow
+    w = MainWindow(); w.show()
+    v = w.view
+    assert v.pinned_row() == -1 and v.header_h == v.ruler_h          # empty: ruler only
+    w.open_path(EXAMPLE)
+    assert v.pinned_row() == 0 and v.header_h == v.ruler_h + v.cell_h
+    w.model.ref_row = 2
+    assert v.pinned_row() == 2
+    w.a_pinned_ref.setChecked(False); w._toggle_pinned_ref(False)
+    assert v.pinned_row() == -1
+    w._toggle_pinned_ref(True)
+    # clicking the strip's name jumps to the reference row
+    v.resize(900, 400); v.viewport().repaint()
+    QTest.mouseClick(v.viewport(), Qt.LeftButton, Qt.NoModifier, QPoint(20, v.ruler_h + 4))
+    assert v.sel_rows == {2}
+    # a lone sequence needs no pinned copy of itself
+    w._set_model(AlignmentModel([SequenceRow("a", "ACGT")]))
+    assert v.pinned_row() == -1
+    # consensus tool: majority vs IUPAC, scope, add as row
+    m = AlignmentModel([SequenceRow("a", "ACGT-A"), SequenceRow("b", "ACGA-A"), SequenceRow("c", "ACGTTA"), SequenceRow("d", "AC-TTG")])
+    w._set_model(m)
+    d = ConsensusDialog(m, [0, 1], 0.5, w)
+    assert d.scope.currentData() == "sel" and d._cons == "ACGT-A"          # two rows: T/A tie at 50 % -> plurality keeps T
+    d.plurality.setChecked(False); d.thr.setValue(0.6)
+    assert d._cons == "ACGN-A"                                            # strict: the tie becomes N
+    d.scope.setCurrentIndex(0); d.thr.setValue(0.5); d.plurality.setChecked(True)
+    assert d._cons == "ACGTTA"                                            # all four: plurality
+    d.thr.setValue(0.9); d.plurality.setChecked(False)
+    assert d._cons == "ACGNTN"                                            # 90 %: only unanimous columns keep a residue
+    d.method.setCurrentIndex(1); d.thr.setValue(0.1)
+    assert d._cons == "ACGWTR"                                            # IUPAC: T/A -> W, A/G -> R
+    d.name.setText("cons"); d.add_row()
+    assert m.nrows == 5 and m.rows[-1].name == "cons" and m.rows[-1].seq == "ACGWTR"
+    w.model.dirty = False; w.close()

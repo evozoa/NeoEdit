@@ -18,8 +18,10 @@ actually use, on a codebase that can keep evolving:
   Manuel Ruiz / codon-degeneracy tables and Clustal X / Zappo / Taylor /
   hydrophobicity. BioEdit "normal" view (colored letters) by default; Ctrl+I
   toggles "inverse" view (colored backgrounds). Shade identities (black, as in
-  BioEdit) vs consensus or first sequence, identities-as-dots, consensus row with
-  adjustable threshold.
+  BioEdit) vs consensus or first sequence, identities-as-dots. The **pinned reference**
+  (the row the chromosome map and gene models follow) stays visible above the grid while
+  you scroll; **Alignment → Consensus sequence…** builds a majority/plurality or
+  IUPAC-degenerate consensus of all or selected rows and adds it as a row, copies or saves it.
 * **Sequence tools** – reverse-complement, complement, reverse, case, DNA↔RNA,
   translation (any NCBI genetic code, any frame, keep-aligned or six-frame report).
 * **Amino-acid line** – an interleaved protein row under each nucleotide sequence.
@@ -79,7 +81,7 @@ actually use, on a codebase that can keep evolving:
   reference peptides by sequence similarity, and appear as their own tracks
   (one per genetic code) beneath the gene models in the genome view.
 * **Analysis** – identity matrix, entropy/identity conservation plots, sequence
-  statistics, consensus report, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
+  statistics, consensus tool, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
   NCBI BLAST launcher.
 * **Formats** – FASTA, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, EMBL, MSF, plus
   full support for BioEdit's own formats: the binary `.bio` project file is read and

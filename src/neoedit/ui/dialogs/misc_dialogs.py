@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal, QRectF
 from PySide6.QtGui import QPainter, QColor, QPen, QPalette
 from PySide6.QtWidgets import (QDialog, QFormLayout, QComboBox, QLineEdit, QCheckBox, QPushButton, QHBoxLayout,
                                QVBoxLayout, QLabel, QDialogButtonBox, QPlainTextEdit, QWidget, QFileDialog,
-                               QTableWidgetItem, QGroupBox, QSpinBox, QTabWidget, QScrollArea)
+                               QTableWidgetItem, QGroupBox, QSpinBox, QDoubleSpinBox, QTabWidget, QScrollArea)
 
 from ...analysis import translate as T
 from ...analysis import external as EXT
@@ -289,3 +289,99 @@ class NewSequenceDialog(QDialog):
                 out.append((name, "".join(buf)))
             return out
         return [(self.name.text() or "new_seq", re.sub(r"[\s\d]", "", t))]
+
+
+# ------------------------------------------------------------------ Consensus
+class ConsensusDialog(QDialog):
+    """Build a consensus of all / selected rows: majority (plurality) with a threshold, or an
+    IUPAC-degenerate consensus; add it to the alignment as a row, copy it, or save it."""
+
+    def __init__(self, model, selected_rows, threshold=0.5, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Consensus sequence")
+        self.resize(720, 480)
+        self.model = model
+        self.selected = [r for r in selected_rows if 0 <= r < model.nrows]
+        lay = QVBoxLayout(self)
+        form = QFormLayout()
+        self.scope = QComboBox()
+        self.scope.addItem(f"All sequences ({model.nrows})", "all")
+        if 1 < len(self.selected) < model.nrows:
+            self.scope.addItem(f"Selected sequences ({len(self.selected)})", "sel")
+            self.scope.setCurrentIndex(1)
+        form.addRow("Sequences", self.scope)
+        self.method = QComboBox()
+        self.method.addItem("Majority / plurality (threshold, else N/X)", "majority")
+        if model.is_nucleotide():
+            self.method.addItem("IUPAC degenerate (every base above a minimum fraction)", "iupac")
+        form.addRow("Method", self.method)
+        self.thr = QDoubleSpinBox(); self.thr.setRange(0.0, 1.0); self.thr.setSingleStep(0.05); self.thr.setDecimals(2)
+        self.thr.setValue(float(threshold))
+        self.thr_label = QLabel()
+        row = QHBoxLayout(); row.addWidget(self.thr); row.addWidget(self.thr_label, 1)
+        form.addRow("Threshold", row)
+        self.ignore_gaps = QCheckBox("Ignore gaps (fractions over residues only; a gap-only column gives '-')")
+        self.ignore_gaps.setChecked(True)
+        form.addRow("", self.ignore_gaps)
+        self.plurality = QCheckBox("Accept the commonest residue when it reaches 50 % even below the threshold")
+        self.plurality.setChecked(True)
+        form.addRow("", self.plurality)
+        self.name = QLineEdit("Consensus")
+        form.addRow("Name", self.name)
+        lay.addLayout(form)
+        self.preview = QPlainTextEdit(); self.preview.setReadOnly(True)
+        f = self.preview.font(); f.setFamily("DejaVu Sans Mono"); f.setStyleHint(QFont.Monospace); self.preview.setFont(f)
+        lay.addWidget(self.preview, 1)
+        self.info = QLabel(""); lay.addWidget(self.info)
+        bb = QDialogButtonBox()
+        b_add = bb.addButton("Add as sequence", QDialogButtonBox.ActionRole)
+        b_copy = bb.addButton("Copy", QDialogButtonBox.ActionRole)
+        b_save = bb.addButton("Save FASTA…", QDialogButtonBox.ActionRole)
+        bb.addButton(QDialogButtonBox.Close)
+        b_add.clicked.connect(self.add_row); b_copy.clicked.connect(self.copy); b_save.clicked.connect(self.save)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        for wdg in (self.scope, self.method):
+            wdg.currentIndexChanged.connect(self.recompute)
+        self.thr.valueChanged.connect(self.recompute)
+        self.ignore_gaps.toggled.connect(self.recompute); self.plurality.toggled.connect(self.recompute)
+        self.recompute()
+
+    def rows(self):
+        idx = self.selected if self.scope.currentData() == "sel" else range(self.model.nrows)
+        return [self.model.rows[i].seq for i in idx]
+
+    def consensus(self) -> str:
+        rows = self.rows()
+        if self.method.currentData() == "iupac":
+            from ...analysis import primer_design as PD
+            return PD.degenerate_consensus(rows, threshold=self.thr.value())
+        return T.consensus(rows, threshold=self.thr.value(), ignore_gaps=self.ignore_gaps.isChecked(),
+                           plurality=self.plurality.isChecked())
+
+    def recompute(self, *_a):
+        iupac = self.method.currentData() == "iupac"
+        self.thr_label.setText("minimum fraction of a base to be included in the IUPAC code" if iupac
+                               else "fraction of residues that must agree")
+        self.ignore_gaps.setEnabled(not iupac); self.plurality.setEnabled(not iupac)
+        cons = self.consensus()
+        self._cons = cons
+        self.preview.setPlainText("\n".join(cons[i:i + 100] for i in range(0, len(cons), 100)))
+        n_amb = sum(1 for ch in cons if ch not in "ACGTU-" and ch != "X") if self.model.is_nucleotide() else cons.count("X")
+        self.info.setText(f"{len(cons):,} columns, {len(self.rows())} sequences; "
+                          f"{n_amb:,} ambiguous position(s)" + (" (N = no residue reached the threshold)" if not iupac else ""))
+
+    def add_row(self):
+        from ...model import SequenceRow
+        self.model.add_row(SequenceRow(self.name.text().strip() or "Consensus", self._cons,
+                                       f"consensus ({self.method.currentText().split(' (')[0]}, threshold {self.thr.value():.2f})"))
+        self.info.setText(f"Added '{self.name.text().strip() or 'Consensus'}' as the last row.")
+
+    def copy(self):
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(f">{self.name.text().strip() or 'Consensus'}\n{self._cons}\n")
+        self.info.setText("Copied as FASTA.")
+
+    def save(self):
+        save_text(self, f">{self.name.text().strip() or 'Consensus'}\n{self._cons}\n", "Save consensus",
+                  "FASTA (*.fasta *.fa);;All files (*)", (self.name.text().strip() or "consensus") + ".fasta")
