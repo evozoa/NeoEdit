@@ -219,6 +219,11 @@ def test_import_dialog_wiring(tmp_path):
     w.import_remote()
     dlg = w._import_dialog
     assert isinstance(dlg, ImportDialog) and dlg.isVisible()
+    assert dlg.r_open.isChecked()                     # empty editor: open as new
+    w.open_path(os.path.join(HERE, "..", "examples", "cox1_demo.fasta"))
+    w.import_remote()
+    assert dlg.r_add.isChecked()                      # something loaded: imports add by default
+    w.new_alignment()
     dlg.autoload = False
     dlg.dir_edit.setText(str(tmp_path))
     # NCBI job is built from the text box + ticked search rows + sub-range
@@ -245,9 +250,20 @@ def test_import_dialog_wiring(tmp_path):
     dlg._fetched((example, "done"))
     assert w.model.nrows == 10
     w.model.dirty = False
-    dlg.r_open.setChecked(True)
     gbp = os.path.join(HERE, "..", "examples", "mito", "NC_012920_MDP.gb")
     if os.path.exists(gbp):
+        dlg._fetched((gbp, "done"))                   # still "add": GenBank features come along, re-homed to row 10
+        assert w.model.nrows == 11 and w.model.features and all(f.row == 10 for f in w.model.features)
+        w.model.dirty = False
+        dlg.r_open.setChecked(True)
+        # replacing a non-empty alignment asks first; auto-answer Yes
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QMessageBox
+        def answer():
+            for mb in QApplication.topLevelWidgets():
+                if isinstance(mb, QMessageBox) and mb.isVisible():
+                    mb.button(QMessageBox.Yes).click()
+        QTimer.singleShot(150, answer)
         dlg._fetched((gbp, "done"))
         assert w.model.nrows == 1 and w.model.circular
     dlg.close()

@@ -65,9 +65,10 @@ class ImportDialog(QDialog):
         dest = QGroupBox("Destination")
         dl = QFormLayout(dest)
         row = QHBoxLayout()
-        self.r_open = QRadioButton("Open as a new alignment"); self.r_add = QRadioButton("Add to the current alignment")
-        (self.r_add if settings.value("remote/add", "0") == "1" else self.r_open).setChecked(True)
-        row.addWidget(self.r_open); row.addWidget(self.r_add); row.addStretch(1)
+        self.r_add = QRadioButton("Add to the current alignment")
+        self.r_open = QRadioButton("Replace it (open as a new alignment)")
+        self.r_add.setChecked(True)
+        row.addWidget(self.r_add); row.addWidget(self.r_open); row.addStretch(1)
         dl.addRow("Import into", row)
         row2 = QHBoxLayout()
         self.dir_edit = QLineEdit(settings.value("remote/download_dir", default_download_dir()))
@@ -88,6 +89,10 @@ class ImportDialog(QDialog):
         bb.accepted.connect(self.fetch)
         bb.rejected.connect(self.close)
         lay.addWidget(bb)
+
+    def set_default_destination(self, has_data: bool):
+        """Imports add to what is loaded; only an empty editor defaults to 'open as new'."""
+        (self.r_add if has_data else self.r_open).setChecked(True)
 
     # ------------------------------------------------------------ NCBI tab
     def _build_ncbi(self) -> QWidget:
@@ -484,7 +489,6 @@ class ImportDialog(QDialog):
             job, busy = self._ncbi_job() if self.tabs.currentIndex() == 0 else self._ensembl_job()
         except RemoteError as e:
             QMessageBox.warning(self, "Import", str(e)); return
-        self.settings.setValue("remote/add", "1" if self.r_add.isChecked() else "0")
         self._run(job, self._fetched, busy)
 
     def _fetched(self, res):
