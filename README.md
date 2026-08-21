@@ -57,7 +57,7 @@ actually use, on a codebase that can keep evolving:
 * **Primer design across an alignment** – conserved (universal) or discriminating
   (eDNA) primers using sequence groups, conservation masking, 3'-weighted mismatch
   scoring, IUPAC-degenerate options and an in-silico PCR table.
-* **Import from NCBI and Ensembl** (`Ctrl+Shift+I`) – fetch GenBank/FASTA records from
+* **Import from NCBI and Ensembl** (`Ctrl+Shift+I`) – add GenBank/FASTA records from
   NCBI Entrez by accession/GI (with sub-range and strand) or by searching Entrez and
   ticking hits; fetch genes (symbol or stable ID), regions, cDNA/CDS/protein from the
   Ensembl REST API **pinned to release 116** (archive server first, live server as

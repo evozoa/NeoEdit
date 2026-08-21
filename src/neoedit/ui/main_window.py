@@ -604,24 +604,11 @@ class MainWindow(QMainWindow):
         return m.nrows
 
     def import_remote(self):
-        """Modeless NCBI / Ensembl importer; results come back through open_path / import_path."""
+        """Modeless NCBI / Ensembl importer; every record is added to the current alignment via import_path."""
         dlg = getattr(self, "_import_dialog", None)
         if dlg is None:
-            def open_new(path):
-                if self.model.nrows:
-                    r = QMessageBox.question(self, "Replace alignment",
-                                             f"Replace the current alignment ({self.model.nrows} sequence(s)) with the "
-                                             f"downloaded record(s)?\n\nChoose No to add them to the current alignment instead.",
-                                             QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-                    if r == QMessageBox.Cancel:
-                        return
-                    if r == QMessageBox.No:
-                        self.import_path(path); return
-                if self._maybe_save():
-                    self.open_path(path)
-            dlg = ImportDialog(self, self.settings, open_new, self.import_path)
+            dlg = ImportDialog(self, self.settings, self.import_path)
             self._import_dialog = dlg
-        dlg.set_default_destination(self.model.nrows > 0)
         dlg.show(); dlg.raise_(); dlg.activateWindow()
 
     def save_file(self) -> bool:

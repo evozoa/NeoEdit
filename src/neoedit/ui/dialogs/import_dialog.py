@@ -40,15 +40,15 @@ def default_download_dir() -> str:
 
 
 class ImportDialog(QDialog):
-    """`on_open(path)` replaces the alignment, `on_add(path)` appends to it; both are main-window callbacks."""
+    """Imported records are always *added* to the current alignment via the main window's `on_add(path)`."""
 
-    def __init__(self, parent, settings, on_open, on_add, autoload: bool = True):
+    def __init__(self, parent, settings, on_add, autoload: bool = True):
         super().__init__(parent)
         self.setWindowTitle("Import from NCBI / Ensembl")
         self.setModal(False)
         self.resize(760, 640)
         self.settings = settings
-        self.on_open, self.on_add = on_open, on_add
+        self.on_add = on_add
         self.autoload = autoload
         self._workers: list[_Worker] = []
         self._species_cache: dict[str, list[E.Species]] = {}
@@ -61,15 +61,9 @@ class ImportDialog(QDialog):
         self.tabs.currentChanged.connect(self._tab_changed)
         lay.addWidget(self.tabs, 1)
 
-        # destination
+        # destination: records are added to the current alignment and kept as files
         dest = QGroupBox("Destination")
         dl = QFormLayout(dest)
-        row = QHBoxLayout()
-        self.r_add = QRadioButton("Add to the current alignment")
-        self.r_open = QRadioButton("Replace it (open as a new alignment)")
-        self.r_add.setChecked(True)
-        row.addWidget(self.r_add); row.addWidget(self.r_open); row.addStretch(1)
-        dl.addRow("Import into", row)
         row2 = QHBoxLayout()
         self.dir_edit = QLineEdit(settings.value("remote/download_dir", default_download_dir()))
         b = QPushButton("…"); b.setFixedWidth(32); b.clicked.connect(self._browse_dir)
@@ -89,10 +83,6 @@ class ImportDialog(QDialog):
         bb.accepted.connect(self.fetch)
         bb.rejected.connect(self.close)
         lay.addWidget(bb)
-
-    def set_default_destination(self, has_data: bool):
-        """Imports add to what is loaded; only an empty editor defaults to 'open as new'."""
-        (self.r_add if has_data else self.r_open).setChecked(True)
 
     # ------------------------------------------------------------ NCBI tab
     def _build_ncbi(self) -> QWidget:
@@ -495,10 +485,7 @@ class ImportDialog(QDialog):
         path, msg = res
         self.status.setText(msg)
         try:
-            if self.r_add.isChecked():
-                self.on_add(path)
-            else:
-                self.on_open(path)
+            self.on_add(path)
         except Exception as e:   # noqa: BLE001
             QMessageBox.critical(self, "Import", f"Downloaded to {path}, but it could not be opened:\n{e}")
             return
