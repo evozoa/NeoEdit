@@ -207,3 +207,24 @@ def test_minor_features_hidden_by_default(tmp_path):
     v.show_minor = True
     v.grab()
     assert "misc_feature" in {g.name for _r, g, _t in v._gene_hits}
+
+
+def test_region_view_hideable():
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    from neoedit.ui.main_window import MainWindow
+    HERE = os.path.dirname(__file__)
+    gb = os.path.join(HERE, "..", "examples", "mito", "NC_012920_MDP.gb")
+    if not os.path.exists(gb):
+        import pytest; pytest.skip("rCRS example missing")
+    w = MainWindow(); w.resize(1100, 700); w.show(); w.open_path(gb); app.processEvents()
+    gp = w.genome_panel
+    assert gp.isVisible() and gp.region_visible() and w.a_g_region.isChecked()
+    w.a_g_region.trigger(); app.processEvents()                 # menu -> hidden, overview stays
+    assert not gp.region_visible() and gp.overview.isVisible() and not gp.region_btn.isChecked()
+    assert gp.preferred_height() < 120
+    gp.region_btn.setChecked(True); app.processEvents()          # panel button -> shown, menu follows
+    assert gp.region_visible() and w.a_g_region.isChecked()
+    w.model.dirty = False; w.close()

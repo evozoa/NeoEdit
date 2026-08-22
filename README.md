@@ -21,6 +21,9 @@ actually use, on a codebase that can keep evolving:
   BioEdit) vs consensus or first sequence, identities-as-dots. While the **pinned reference**
   (the row the chromosome map and gene models follow) is scrolled out of view, a tinted,
   "pinned"-tagged copy of it sticks above the grid (View ▸ Show pinned reference row);
+  the region (gene-model) view can be hidden on its own — "Gene models" button on the panel bar
+  or Genome ▸ Show region view (Ctrl+Shift+V) — keeping just the chromosome overview, and the
+  whole panel toggles with Ctrl+Shift+B;
   feature bars under residues mark your own features (ORFs, primers, sites) — the reference's
   gene models stay in the region view unless View ▸ Show gene models in grid is on;
   **Alignment → Consensus sequence…** builds a majority/plurality or

@@ -81,6 +81,7 @@ class MainWindow(QMainWindow):
         self.genome_panel.geneActivated.connect(self._genome_open_gene)
         self.genome_panel.openRegionRequested.connect(self._genome_open_region)
         self.genome_panel.insertionClicked.connect(self._goto_columns)
+        self.genome_panel.regionVisibilityChanged.connect(self._region_visibility_changed)
         self.view.horizontalScrollBar().valueChanged.connect(self._grid_scrolled)
         self.view.horizontalScrollBar().rangeChanged.connect(lambda *_: self._grid_scrolled())
         self.find_dlg = None
@@ -285,6 +286,9 @@ class MainWindow(QMainWindow):
         self.a_g_ann = A("Load &annotation (GFF3/GTF/BED/GenBank)…", self.genome_load_annotation)
         self.a_g_syn = A("Load &synteny blocks (PAF)…", self.genome_load_synteny)
         self.a_g_panel = A("Show genome &panel", self._toggle_genome_panel, "Ctrl+Shift+B", True)
+        self.a_g_region = A("Show region &view (gene models)", self._toggle_region_view, "Ctrl+Shift+V", True,
+                            tip="Hide the gene-model / ORF-track view and keep only the chromosome overview")
+        self.a_g_region.setChecked(True)
         self.a_g_goto = A("Go to &region / gene…", self.genome_goto, "Ctrl+J")
         self.a_g_openreg = A("Open current region in &new editor window", lambda: self._genome_open_region(*self.genome_panel.window()))
         self.a_g_clear = A("&Close genome (keep sequence)", self.genome_close)
@@ -369,7 +373,7 @@ class MainWindow(QMainWindow):
             an.addAction(a) if a else an.addSeparator()
 
         gm = mb.addMenu("&Genome")
-        for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_circ, self.a_g_goto, self.a_g_openreg, self.a_g_orfclear, None, self.a_g_clear):
+        for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_region, self.a_g_circ, self.a_g_goto, self.a_g_openreg, self.a_g_orfclear, None, self.a_g_clear):
             gm.addAction(a) if a else gm.addSeparator()
 
         h = mb.addMenu("&Help")
@@ -766,6 +770,9 @@ class MainWindow(QMainWindow):
         gm = self.settings.value("grid_gene_models", False)
         gm = gm in (True, "true", "True", 1, "1")
         self.a_gene_models.setChecked(gm); self.view.show_gene_models = gm
+        rv = self.settings.value("genome_region_visible", True)
+        rv = rv in (True, "true", "True", 1, "1")
+        self.a_g_region.setChecked(rv); self.genome_panel.set_region_visible(rv)
         inv = self.settings.value("inverse_view", False)
         inv = inv in (True, "true", "True", 1, "1")
         self._set_inverse(inv)
@@ -1416,7 +1423,22 @@ class MainWindow(QMainWindow):
     def _toggle_genome_panel(self, on):
         self.genome_panel.setVisible(on)
         if on:
-            self.splitter.setSizes([260, max(200, self.height() - 260)])
+            h = self.genome_panel.preferred_height()
+            self.splitter.setSizes([h, max(200, self.height() - h)])
+
+    def _toggle_region_view(self, on):
+        self.genome_panel.set_region_visible(bool(on))
+        self.settings.setValue("genome_region_visible", bool(on))
+        if self.genome_panel.isVisible():
+            h = self.genome_panel.preferred_height()
+            self.splitter.setSizes([h, max(200, self.height() - h)])
+
+    def _region_visibility_changed(self, on):
+        self.a_g_region.blockSignals(True); self.a_g_region.setChecked(bool(on)); self.a_g_region.blockSignals(False)
+        self.settings.setValue("genome_region_visible", bool(on))
+        if self.genome_panel.isVisible():
+            h = self.genome_panel.preferred_height()
+            self.splitter.setSizes([h, max(200, self.height() - h)])
 
     def ref_index(self) -> int:
         r = self.model.ref_row

@@ -572,6 +572,7 @@ class RegionView(QWidget):
 
 # ======================================================================== panel
 class GenomePanel(QWidget):
+    regionVisibilityChanged = Signal(bool)  # region (gene-model) view shown / hidden
     contigSelected = Signal(str)            # user picked a contig
     focusRequested = Signal(int, int)       # scroll grid to region
     geneActivated = Signal(object)
@@ -600,10 +601,13 @@ class GenomePanel(QWidget):
         self.minor_cb.toggled.connect(self._toggle_minor)
         self.open_btn = QToolButton(); self.open_btn.setText("Open region in editor"); self.open_btn.setToolTip("Open the red-box region as a new alignment window with gene features")
         self.open_btn.clicked.connect(lambda: self.openRegionRequested.emit(*self.region.win))
+        self.region_btn = QToolButton(); self.region_btn.setCheckable(True); self.region_btn.setChecked(True)
+        self.region_btn.setText("Gene models ▾"); self.region_btn.setToolTip("Show / hide the region view (gene models, ORF tracks, synteny); the chromosome overview stays")
+        self.region_btn.toggled.connect(self.set_region_visible)
         self.info = QLabel(""); self.info.setMinimumWidth(200)
         bar.addWidget(QLabel("Contig:")); bar.addWidget(self.contig_combo); bar.addWidget(self.region_edit, 1)
         bar.addWidget(self.zoom_in); bar.addWidget(self.zoom_out); bar.addWidget(self.expand_cb)
-        bar.addWidget(self.minor_cb); bar.addWidget(self.open_btn)
+        bar.addWidget(self.minor_cb); bar.addWidget(self.open_btn); bar.addWidget(self.region_btn)
         bar.addWidget(self.info)
         lay.addLayout(bar)
         self.overview = ChromosomeOverview()
@@ -649,6 +653,24 @@ class GenomePanel(QWidget):
     def set_circular(self, on: bool):
         self.region.circular = bool(on)
         self.region.update()
+
+    def set_region_visible(self, on: bool):
+        """Hide tier 2 (gene models / ORF tracks / synteny) and keep only the bar + chromosome overview."""
+        on = bool(on)
+        if self.region.isVisible() == on and self.region_btn.isChecked() == on:
+            return
+        self.region.setVisible(on)
+        self.region_btn.blockSignals(True); self.region_btn.setChecked(on); self.region_btn.blockSignals(False)
+        self.region_btn.setText("Gene models ▾" if on else "Gene models ▸")
+        for w in (self.expand_cb, self.minor_cb, self.open_btn):
+            w.setEnabled(on)
+        self.regionVisibilityChanged.emit(on)
+
+    def region_visible(self) -> bool:
+        return self.region.isVisibleTo(self)
+
+    def preferred_height(self) -> int:
+        return 260 if self.region_visible() else self.overview.height() + 34
 
     def add_orf_track(self, label: str, items: list[tuple[int, int, int, str, str]], color: str = "#7d3c98",
                       replace: bool = True):
