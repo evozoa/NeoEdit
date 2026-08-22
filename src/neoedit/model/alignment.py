@@ -75,6 +75,7 @@ class AlignmentModel:
         self._seq_type = seq_type
         self.ref_row: int = 0          # pinned reference: anchors gene models, coordinates and tiers 1-2
         self.circular: bool = False    # mitogenomes / plasmids
+        self.topology_known: bool = False   # True once a file declared it or the user chose it
         self.mask_row: int | None = None   # BioEdit-style analysis mask (positions in/out)
         self.group_colors: dict[str, str] = {}
         self._detected_type = None

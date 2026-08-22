@@ -79,16 +79,19 @@ def translate_aligned_reverse(seq: str, table: int = 1, frame: int = 0) -> str:
     return translate_aligned(rc, table, frame)
 
 
-def translate_region(seq: str, start: int, end: int, table: int = 1, strand: int = 1) -> str:
+def translate_region(seq: str, start: int, end: int, table: int = 1, strand: int = 1, phase: int = 0) -> str:
     """Translate alignment columns [start,end) of a row in its own frame.
 
     Gaps are dropped before translation, so an indel inside the feature does not
-    shift the reading frame of the rest of it.
+    shift the reading frame of the rest of it. `phase` = bases to skip at the 5' end
+    of the region (GFF sense), e.g. the second piece of a CDS crossing the origin.
     """
     from Bio.Seq import Seq as _S
     sub = "".join(c for c in seq[start:end] if c not in GAPSET).upper().replace("U", "T")
     if strand < 0:
         sub = str(_S(sub).reverse_complement())
+    if phase:
+        sub = sub[phase % 3:]
     sub = sub[: len(sub) - (len(sub) % 3)]
     if not sub:
         return ""

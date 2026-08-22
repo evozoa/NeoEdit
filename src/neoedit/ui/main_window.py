@@ -7,8 +7,8 @@ import traceback
 from PySide6.QtCore import Qt, QSettings, QSize
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QIcon
 from PySide6.QtWidgets import (QMainWindow, QFileDialog, QMessageBox, QLabel, QToolBar, QDockWidget,
-                               QApplication, QInputDialog, QMenu, QTabWidget, QWidget, QVBoxLayout, QComboBox,
-                               QSpinBox, QProgressDialog, QSplitter)
+                               QApplication, QInputDialog, QMenu, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
+                               QComboBox, QSpinBox, QProgressDialog, QSplitter, QPushButton)
 
 from ..model import AlignmentModel, SequenceRow, Feature
 from ..model import io as mio
@@ -56,7 +56,19 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.genome_panel)
         self.splitter.addWidget(self.view)
         self.splitter.setStretchFactor(0, 0); self.splitter.setStretchFactor(1, 1)
-        self.setCentralWidget(self.splitter)
+        # topology question bar: shown when a reference arrives without a declared topology,
+        # so the circular/linear decision is made early and explicitly
+        self.topo_bar = QWidget(); self.topo_bar.setObjectName("topoBar")
+        self.topo_bar.setStyleSheet("#topoBar { background: #fff4d6; border-bottom: 1px solid #e0b84a; }")
+        tl = QHBoxLayout(self.topo_bar); tl.setContentsMargins(8, 3, 8, 3)
+        self.topo_label = QLabel("")
+        b_circ = QPushButton("Circular (mitogenome / plasmid)"); b_lin = QPushButton("Linear")
+        b_circ.clicked.connect(lambda: self.set_topology(True)); b_lin.clicked.connect(lambda: self.set_topology(False))
+        tl.addWidget(self.topo_label, 1); tl.addWidget(b_circ); tl.addWidget(b_lin)
+        self.topo_bar.hide()
+        central = QWidget(); cl = QVBoxLayout(central); cl.setContentsMargins(0, 0, 0, 0); cl.setSpacing(0)
+        cl.addWidget(self.topo_bar); cl.addWidget(self.splitter, 1)
+        self.setCentralWidget(central)
         self.genome: IndexedFasta | None = None
         self.genome_contig: str | None = None
         self._proj: RefProjection | None = None
@@ -442,6 +454,14 @@ class MainWindow(QMainWindow):
         self._fill_scheme_combo()
         self.scheme_combo.currentTextChanged.connect(self._scheme_combo_changed)
         tb.addWidget(self.scheme_combo)
+        tb.addSeparator()
+        tb.addWidget(QLabel(" Topology: "))
+        self.topo_combo = QComboBox()
+        self.topo_combo.addItem("not set", None); self.topo_combo.addItem("Linear", False); self.topo_combo.addItem("Circular ⟳", True)
+        self.topo_combo.setToolTip("Whether the molecule is circular (mitogenome, plasmid): ORFs, gene models, "
+                                   "restriction search and exports then treat the sequence as a ring")
+        self.topo_combo.currentIndexChanged.connect(self._topo_combo_changed)
+        tb.addWidget(self.topo_combo)
 
     def _fill_scheme_combo(self):
         self.scheme_combo.blockSignals(True)
@@ -460,15 +480,15 @@ class MainWindow(QMainWindow):
     def _build_status(self):
         sb = self.statusBar()
         self.lbl_pos = QLabel(); self.lbl_sel = QLabel(); self.lbl_mode = QLabel(); self.lbl_info = QLabel()
-        for w in (self.lbl_pos, self.lbl_sel, self.lbl_mode):
+        self.lbl_topo = QLabel(); self.lbl_topo.setToolTip("Molecule topology (Sequence ▸ Circular molecule, or the Topology box)")
+        for w in (self.lbl_pos, self.lbl_sel, self.lbl_mode, self.lbl_topo):
             sb.addPermanentWidget(w)
         sb.addWidget(self.lbl_info, 1)
 
     # ------------------------------------------------------------ status
     def _update_status(self, *_):
         m, v = self.model, self.view
-        if hasattr(self, "a_circular"):
-            self.a_circular.blockSignals(True); self.a_circular.setChecked(bool(m.circular)); self.a_circular.blockSignals(False)
+        self._sync_topology_ui()
         if m.nrows:
             r, c = v.cur_row, v.cur_col
             seq = m.rows[r].seq
@@ -530,6 +550,8 @@ class MainWindow(QMainWindow):
         self.view.set_model(model)
         self.features_panel.set_model(model)
         self._rebuild_scheme_menu(); self._fill_scheme_combo()
+        self.topo_bar.hide()
+        self.genome_panel.set_circular(bool(model.circular))
         self._update_status()
         if model.features:
             self.dock.show()
@@ -1027,8 +1049,65 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, 5000)
 
     def _toggle_circular(self, on):
-        self.model.circular = on
+        self.set_topology(bool(on))
+
+    def _topo_combo_changed(self, i):
+        if getattr(self, "_syncing_topo", False):
+            return
+        val = self.topo_combo.itemData(i)
+        if val is None:
+            self.model.topology_known = False; self.model.circular = False
+            self._apply_topology()
+        else:
+            self.set_topology(bool(val))
+
+    def set_topology(self, circular: bool):
+        """The user's (or the file's) explicit answer: circular or linear. Everything circular-aware keys off it."""
+        self.model.circular = bool(circular)
+        self.model.topology_known = True
+        self._apply_topology()
+
+    def _apply_topology(self):
+        m = self.model
+        if self.annotation is not None and self.genome_contig:
+            self.annotation.set_topology(self.genome_contig, self.proj().ref_len if m.nrows else None,
+                                         m.circular if m.topology_known else None)
+        self.genome_panel.set_circular(bool(m.circular))
+        circ = getattr(self, "_circ", None)
+        if circ is not None:
+            try:
+                circ.view.update()
+            except RuntimeError:
+                self._circ = None
+        if m.topology_known:
+            self.topo_bar.hide()
+        self._sync_topology_ui()
         self.view.viewport().update()
+        self.genome_panel.region.update()
+
+    def _sync_topology_ui(self):
+        m = self.model
+        self._syncing_topo = True
+        try:
+            if hasattr(self, "a_circular"):
+                self.a_circular.blockSignals(True); self.a_circular.setChecked(bool(m.circular)); self.a_circular.blockSignals(False)
+            if hasattr(self, "topo_combo"):
+                self.topo_combo.setCurrentIndex(0 if not m.topology_known else (2 if m.circular else 1))
+            if hasattr(self, "lbl_topo"):
+                self.lbl_topo.setText("  ⟳ circular  " if m.circular else ("  linear  " if m.topology_known else "  topology not set  "))
+                self.lbl_topo.setStyleSheet("color: #7a5a00;" if not m.topology_known and m.nrows else "")
+        finally:
+            self._syncing_topo = False
+
+    def _ask_topology_if_unknown(self):
+        """Reference adopted without a declared topology: ask, non-blocking, via the bar above the grid."""
+        m = self.model
+        if m.topology_known or not m.nrows:
+            return
+        name = m.rows[self.ref_index()].name
+        self.topo_label.setText(f"<b>{name}</b>: is this molecule circular (mitogenome, plasmid) or linear? "
+                                f"ORF search, gene models and exports follow this choice; you can change it later in the Topology box.")
+        self.topo_bar.show()
 
     def set_type(self):
         s, ok = QInputDialog.getItem(self, "Sequence type", "Type:", ["auto", "dna", "rna", "protein"], 0, False)
@@ -1133,7 +1212,8 @@ class MainWindow(QMainWindow):
         if not self.model.nrows:
             return
         rows = self.view.target_rows()
-        d = ORFFinderDialog(self.model, rows, self, int(self.settings.value("default_table", 1)))
+        d = ORFFinderDialog(self.model, rows, self, int(self.settings.value("default_table", 1)),
+                            circular=bool(self.model.circular))
         d.orfSelected.connect(lambda r, s, e: self.view.select_region(r, r, s, e - 1))
         d.featuresReady.connect(self._add_features)
         d.orfsFound.connect(self._orfs_to_track)
@@ -1192,10 +1272,11 @@ class MainWindow(QMainWindow):
         for o in orfs:
             if o.row != ref_row:
                 continue
-            s0 = proj.col_to_ref(o.start) if not proj.identity else o.start
-            e0 = proj.col_to_ref(o.end) if not proj.identity else o.end
+            s0, e0 = o.start, o.end          # ungapped positions of the reference row == reference coordinates
             partial = ("5'" if o.partial5 else "") + ("3'" if o.partial3 else "")
-            tip = (f"<b>{o.name or 'ORF'}</b> {s0 + 1:,}-{e0:,} ({'+' if o.strand > 0 else '-'}{o.frame})<br>"
+            if o.wraps:
+                partial = (partial + ", " if partial else "") + "across origin"
+            tip = (f"<b>{o.name or 'ORF'}</b> {GA.fmt_span(s0, e0, proj.ref_len)} ({'+' if o.strand > 0 else '-'}{o.frame})<br>"
                    f"{o.length_aa} aa, start {o.start_codon}, stop {o.stop_codon or 'none'}"
                    f"{', partial ' + partial if partial else ''}<br>genetic code {o.table}"
                    + (f"<br>{o.extra['note']}" if o.extra.get('note') else ""))
@@ -1380,12 +1461,20 @@ class MainWindow(QMainWindow):
         self.genome_panel.set_contigs([(seqid, L)], current=seqid)
         self.genome_panel.set_contig(seqid, L, fetch_seq=lambda s, e: self.ref_ungapped()[s:e])
         self.genome_panel.region.fetch_var = self._variation
+        if ann is not None:
+            if not self.model.topology_known and ann.circular.get(seqid) is not None:
+                # the annotation (e.g. a GenBank record) declared the topology: adopt it
+                self.model.circular = bool(ann.circular.get(seqid)); self.model.topology_known = True
+            ann.set_topology(seqid, L, self.model.circular if self.model.topology_known else None)
         self.genome_panel.set_annotation(ann)
+        self.genome_panel.set_circular(bool(self.model.circular))
         self.genome_panel.set_insertions(self.insertion_carets())
         self.view.feature_provider = self._genome_features
         self.view.translation_provider = self._translation_regions
         self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
         self.genome_panel.set_window(0, min(L, max(2000, L)))
+        self._sync_topology_ui()
+        self._ask_topology_if_unknown()
         self._grid_scrolled()
 
     # -------------------------------------------------- annotated references
@@ -1413,6 +1502,7 @@ class MainWindow(QMainWindow):
         for genes in ann.genes_by_seq.values():
             for g in genes:
                 cur.add_gene(g)
+        cur.lengths.update(ann.lengths); cur.circular.update(ann.circular)
         cur.finalize()
         return cur
 
@@ -1668,14 +1758,28 @@ class MainWindow(QMainWindow):
                 t = max(g.transcripts, key=lambda t: (len(t.cds), t.end - t.start)) if g.transcripts else None
                 segs = (t.cds or t.exons) if t else [(g.start, g.end)]
                 table = int(g.attrs.get("transl_table") or (2 if self.model.circular and not g.cytoplasmic else default_table))
+                L = proj.ref_len
                 for a, b in segs:
-                    ca, cb = proj.span_to_cols(a, b) if not proj.identity else (a, b)
-                    if cb > c0 and ca < c1:
-                        out.append((ca, cb, g.strand, table, g.name))
+                    for pa, pb, phase in self._wrap_pieces(a, b, g.strand, L):
+                        ca, cb = proj.span_to_cols(pa, pb) if not proj.identity else (pa, pb)
+                        if cb > c0 and ca < c1:
+                            out.append((ca, cb, g.strand, table, g.name, phase))
         for f in self.model.features:
             if f.row == row and f.type in ("ORF", "CDS") and f.end > c0 and f.start < c1:
-                out.append((f.start, f.end, f.strand, int(f.data.get("table", default_table)), f.label))
+                out.append((f.start, f.end, f.strand, int(f.data.get("table", default_table)), f.label,
+                            int(f.data.get("phase", 0) or 0)))
         return out
+
+    @staticmethod
+    def _wrap_pieces(a: int, b: int, strand: int, L: int) -> list[tuple[int, int, int]]:
+        """[a,b) in unwrapped reference coordinates -> (start, end, phase) pieces on [0,L); the
+        phase is how many bases of the piece belong to the codon begun before the origin."""
+        if b <= L:
+            return [(a, b, 0)]
+        n1, n2 = L - a, b - L
+        if strand > 0:
+            return [(a, L, 0), (0, n2, (3 - n1 % 3) % 3)]
+        return [(a, L, (3 - n2 % 3) % 3), (0, n2, 0)]
 
     def _genome_features(self, row: int, c0: int, c1: int):
         """Feature provider for the grid: gene models of the genome row as CDS/exon features."""
@@ -1686,21 +1790,24 @@ class MainWindow(QMainWindow):
         def P(a, b):
             return proj.span_to_cols(a, b) if not proj.identity else (a, b)
         out = []
+        L = proj.ref_len
         for g in self.annotation.overlapping(self.genome_contig, u0, u1):
             t = max(g.transcripts, key=lambda t: (len(t.cds), t.end - t.start)) if g.transcripts else None
             if t is None:
                 continue
             col = "#d926a9" if getattr(g, "cytoplasmic", False) else ("#1f5fbf" if g.strand > 0 else "#c0392b")
             segs = [(a, b, "CDS") for a, b in t.cds] or [(a, b, "exon") for a, b in t.exons]
-            for a, b, kind in segs:
-                if b > u0 and a < u1:
-                    ca, cb = P(a, b)
-                    out.append(Feature(row, ca, cb, g.strand, kind, f"{g.name} {kind}", col))
-            if t.cds:
-                for a, b in t.utrs():
+            for a0, b0, kind in segs:
+                for a, b in GA.split_span(a0, b0, L):
                     if b > u0 and a < u1:
                         ca, cb = P(a, b)
-                        out.append(Feature(row, ca, cb, g.strand, "UTR", f"{g.name} UTR", "#9aa8c7" if g.strand > 0 else "#d9a59c"))
+                        out.append(Feature(row, ca, cb, g.strand, kind, f"{g.name} {kind}", col))
+            if t.cds:
+                for a0, b0 in t.utrs():
+                    for a, b in GA.split_span(a0, b0, L):
+                        if b > u0 and a < u1:
+                            ca, cb = P(a, b)
+                            out.append(Feature(row, ca, cb, g.strand, "UTR", f"{g.name} UTR", "#9aa8c7" if g.strand > 0 else "#d9a59c"))
         return out
 
     def _region_features(self, seqid: str, s: int, e: int) -> list:

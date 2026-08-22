@@ -19,7 +19,7 @@ from typing import Iterable, Optional, Sequence
 
 from Bio import SeqIO
 from Bio.Seq import Seq
-from Bio.SeqFeature import SeqFeature, SimpleLocation
+from Bio.SeqFeature import SeqFeature, SimpleLocation, CompoundLocation
 from Bio.SeqRecord import SeqRecord
 
 from .orf_finder import ORF
@@ -90,9 +90,16 @@ def translate_orf(nt: str, table: int) -> str:
     return aa[:-1] if aa.endswith("*") else aa
 
 
-def orf_to_feature(a: ORFAnnotation, offset: int = 0) -> SeqFeature:
+def orf_to_feature(a: ORFAnnotation, offset: int = 0, length: int | None = None) -> SeqFeature:
     o = a.orf
-    loc = SimpleLocation(o.start + offset, o.end + offset, strand=1 if o.strand > 0 else -1)
+    st = 1 if o.strand > 0 else -1
+    L = length or o.extra.get("length")
+    if L and o.end > L:
+        # across the origin of a circular molecule: join(start..L, 1..end-L), parts in transcription order
+        p1, p2 = SimpleLocation(o.start + offset, L + offset, strand=st), SimpleLocation(offset, o.end - L + offset, strand=st)
+        loc = CompoundLocation([p1, p2] if st > 0 else [p2, p1])
+    else:
+        loc = SimpleLocation(o.start + offset, o.end + offset, strand=st)
     tr = translate_orf(o.nt, a.table)
     return SeqFeature(loc, type=a.feature_type, qualifiers=a.qualifiers(tr))
 

@@ -41,6 +41,7 @@ class RestrictionDialog(QDialog):
             self.seq_combo.addItem(f"{i + 1}. {r.name}", i)
         self.seq_combo.setCurrentIndex(min(view.cur_row, model.nrows - 1))
         self.circular = QCheckBox("Circular molecule (plasmid / mitogenome)")
+        self.circular.setChecked(bool(getattr(model, "circular", False)))
         sf.addRow("Search in", self.scope)
         sf.addRow("Sequence", self.seq_combo)
         sf.addRow("", self.circular)

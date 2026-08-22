@@ -161,8 +161,18 @@ def test_origin_spanning_and_mdp_features():
         import pytest; pytest.skip("rCRS+MDP example not built")
     ann = load_genbank(gb)
     dl = [g for gs in ann.genes_by_seq.values() for g in gs if g.name.startswith("D-loop")]
-    assert len(dl) == 2 and all(g.attrs.get("wraps_origin") == "true" for g in dl)
-    assert max(len(g) for g in dl) < 1000        # neither piece spans the genome
+    # one feature, kept whole in unwrapped coordinates: join(16024..16569,1..576) -> [16023, 17145)
+    assert len(dl) == 1 and dl[0].attrs.get("wraps_origin") == "true"
+    d = dl[0]
+    assert (d.start, d.end, len(d)) == (16023, 16569 + 576, 1122) and ann.lengths["NC_012920.1"] == 16569
+    assert ann.is_circular("NC_012920.1")
+    # found from both sides of the origin, not by a window in the middle of the genome
+    assert d in ann.overlapping("NC_012920.1", 16500, 16569)
+    assert d in ann.overlapping("NC_012920.1", 0, 100)
+    assert d not in ann.overlapping("NC_012920.1", 5000, 6000)
+    from neoedit.genome.annotations import split_span, fmt_span
+    assert split_span(d.start, d.end, 16569) == [(16023, 16569), (0, 576)]
+    assert fmt_span(d.start, d.end, 16569) == "16,024-576 (across origin)"
     mdp = sorted(g.name for gs in ann.genes_by_seq.values() for g in gs if g.cytoplasmic)
     assert mdp == ["MOTS-c", "SHLP1", "SHLP2", "SHLP3", "SHLP4", "SHLP5", "SHLP6", "humanin"]
     # humanin sits inside MT-RNR2 and uses the standard code

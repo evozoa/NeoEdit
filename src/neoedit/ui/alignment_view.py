@@ -571,15 +571,17 @@ class AlignmentView(QAbstractScrollArea):
         regions = self._translation_regions(row, c0, c1)
         covered: set[int] = set()
         bg = QColor(self.AA_REGION_BG_DARK if dark else self.AA_REGION_BG)
-        for (rs, re_, strand, table, name) in regions:
+        for reg in regions:
+            rs, re_, strand, table, name = reg[:5]
+            phase = int(reg[5]) if len(reg) > 5 else 0        # bases to skip at the 5' end (piece after the origin)
             x0 = grid_left + (max(rs, c0) - hs) * self.cell_w
             x1 = grid_left + (min(re_, c1) - hs) * self.cell_w
             if x1 > x0:
                 p.fillRect(int(x0), ay, int(x1 - x0), self.cell_h, bg)
-            aa = T.translate_region(seq, rs, re_, table, strand)
+            aa = T.translate_region(seq, rs, re_, table, strand, phase)
             for k, ch in enumerate(aa):
                 # column of the middle base of this codon, in feature orientation
-                cc = (rs + k * 3 + 1) if strand > 0 else (re_ - 1 - (k * 3 + 1))
+                cc = (rs + phase + k * 3 + 1) if strand > 0 else (re_ - phase - 1 - (k * 3 + 1))
                 covered.add(cc)
                 if not (c0 <= cc < c1):
                     continue

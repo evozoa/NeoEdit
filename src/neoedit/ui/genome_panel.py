@@ -13,7 +13,7 @@ from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics, QPalette,
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLineEdit, QToolButton, QLabel,
                                QToolTip, QCheckBox, QSizePolicy)
 
-from ..genome.annotations import Annotation, Gene, Transcript, SyntenyBlock, pack_lanes
+from ..genome.annotations import Annotation, Gene, Transcript, SyntenyBlock, pack_lanes, fmt_span
 from ..model import colors as C
 
 NT_COL = {"A": "#008000", "C": "#0000ff", "G": "#000000", "T": "#ff0000"}
@@ -191,6 +191,7 @@ class RegionView(QWidget):
         self.expanded = False               # show all transcripts
         self.show_minor = False             # misc_feature / repeat_region / variation etc.
         self.orf_tracks: list[dict] = []     # [{"label","color","items":[(s,e,strand,name,tip[,color])]}]
+        self.circular = False                # circular molecule: features may continue past the origin (end > length)
         self.setMinimumHeight(150)
         self.setMouseTracking(True)
         self._drag = None
@@ -300,20 +301,28 @@ class RegionView(QWidget):
         if not self.show_minor:
             genes = [g for g in genes if (g.biotype or "").lower() not in MINOR_TYPES]
         items = []
+        L = self.length
         for g in genes:
             txs = g.transcripts if self.expanded else [max(g.transcripts, key=lambda t: (len(t.cds), t.end - t.start))] if g.transcripts else []
             for t in txs:
                 label_w = fm.horizontalAdvance(g.name if not self.expanded else f"{g.name} {t.name}") + 6
-                x0, x1 = self._x(t.start), self._x(t.end)
-                items.append((int(min(x0, x1)), int(max(x1, x0 + label_w)), (g, t)))
+                # a transcript past the origin is drawn twice: its tail at the right end and its
+                # head (shifted by -length) at the left end of the molecule
+                offsets = (0, -L) if t.end > L else (0,)
+                for off in offsets:
+                    a, b = t.start + off, t.end + off
+                    if b <= s or a >= e:
+                        continue
+                    x0, x1 = self._x(max(a, s)), self._x(min(b, e))
+                    items.append((int(min(x0, x1)), int(max(x1, x0 + label_w)), (g, t, off)))
         lanes = pack_lanes(items, gap=4)
         lane_h = 26 if not self.expanded else 22
         max_lanes = max(1, (H - y - 40) // lane_h)
         y0 = y + 4
         for li, lane in enumerate(lanes[:max_lanes]):
             yy = y0 + li * lane_h
-            for _, _, (g, t) in lane:
-                self._draw_transcript(p, fm, g, t, yy, lane_h)
+            for _, _, (g, t, off) in lane:
+                self._draw_transcript(p, fm, g, t, yy, lane_h, off)
         if len(lanes) > max_lanes:
             p.setPen(QColor("#a00")); p.drawText(QPointF(left, y0 + max_lanes * lane_h + 10), f"… {len(lanes) - max_lanes} more rows (zoom in or enlarge panel)")
         y = y0 + min(len(lanes), max_lanes) * lane_h + 6
@@ -327,7 +336,12 @@ class RegionView(QWidget):
             y += 4
             for track in self.orf_tracks:
                 col = QColor(track.get("color", "#7d3c98"))
-                vis = [it for it in track["items"] if it[1] > s and it[0] < e]
+                vis = []
+                for it in track["items"]:
+                    for off in ((0, -L) if it[1] > L else (0,)):
+                        a, b = it[0] + off, it[1] + off
+                        if b > s and a < e:
+                            vis.append((a, b) + tuple(it[2:]))
                 lanes = pack_lanes([(int(self._x(it[0])), int(self._x(it[1])) + fm.horizontalAdvance(it[3]) + 6, it)
                                     for it in vis], gap=4)
                 p.setPen(QColor("#555"))
@@ -379,6 +393,16 @@ class RegionView(QWidget):
                 if x1 - x0 > fm.horizontalAdvance(lab) + 6:
                     p.setPen(QColor("#000")); p.drawText(QPointF(x0 + 3, ty + 10), lab)
 
+        # origin of a circular molecule: marked at both ends of the linearised view
+        if self.circular:
+            p.setPen(QPen(QColor("#6d28d9"), 1, Qt.DashLine))
+            for pos in (0, L):
+                if s <= pos <= e:
+                    x = self._x(pos)
+                    p.drawLine(QPointF(x, 16), QPointF(x, H - 4))
+                    p.setPen(QColor("#6d28d9"))
+                    p.drawText(QPointF(min(x + 3, right - 36), H - 6), "origin")
+                    p.setPen(QPen(QColor("#6d28d9"), 1, Qt.DashLine))
         # focus box (tier 3 region)
         if self.focus and self.focus[1] > s and self.focus[0] < e:
             fx0, fx1 = self._x(self.focus[0]), self._x(self.focus[1])
@@ -388,9 +412,19 @@ class RegionView(QWidget):
         p.setPen(QColor("#666")); p.drawText(QPointF(2, 9), "bp")
         p.end()
 
-    def _draw_transcript(self, p: QPainter, fm, g: Gene, t: Transcript, y: int, lane_h: int):
+    def _draw_transcript(self, p: QPainter, fm, g: Gene, t: Transcript, y: int, lane_h: int, off: int = 0):
         left, right = 40, self.width() - 8
+        X = self._x
+        self._x = lambda v, _X=X, _o=off: _X(v + _o)          # shift every coordinate of this piece
+        try:
+            self._draw_transcript_at(p, fm, g, t, y, lane_h, left, right, off)
+        finally:
+            self._x = X
+
+    def _draw_transcript_at(self, p, fm, g, t, y, lane_h, left, right, off):
         x0, x1 = max(left, self._x(t.start)), min(right, self._x(t.end))
+        if x1 < left or x0 > right:
+            return
         mid = y + 8
         base = QColor("#1f5fbf") if g.strand > 0 else QColor("#c0392b")
         if g.biotype and "protein" not in g.biotype and g.biotype not in ("gene", "mRNA", "CDS", "bed"):
@@ -461,7 +495,7 @@ class RegionView(QWidget):
         if h:
             g, t = h
             self.setCursor(Qt.PointingHandCursor)
-            info = (f"<b>{g.name}</b> ({g.id})  {g.seqid}:{fmt_bp(g.start + 1)}-{fmt_bp(g.end)} "
+            info = (f"<b>{g.name}</b> ({g.id})  {g.seqid}:{fmt_span(g.start, g.end, self.length if g.end > self.length else None)} "
                     f"({'+' if g.strand > 0 else '-'})  {g.biotype}<br>{t.name}: {len(t.exons)} exons"
                     + (f", CDS {sum(b - a for a, b in t.cds):,} bp" if t.cds else "")
                     + "".join(f"<br>{k}: {v}" for k, v in g.attrs.items() if k in ("description", "product"))
@@ -469,7 +503,7 @@ class RegionView(QWidget):
                        f"{' — partial' if g.attrs.get('partial_mapping') == 'True' else ''}"
                        f"{' — low identity' if g.attrs.get('low_identity') == 'True' else ''}</i>" if "coverage" in g.attrs else ""))
             QToolTip.showText(QCursor.pos(), info, self)
-            self.hoverInfo.emit(f"{g.name}  {g.seqid}:{fmt_bp(g.start + 1)}-{fmt_bp(g.end)} ({'+' if g.strand > 0 else '-'})")
+            self.hoverInfo.emit(f"{g.name}  {g.seqid}:{fmt_span(g.start, g.end, self.length if g.end > self.length else None)} ({'+' if g.strand > 0 else '-'})")
             return
         for r, ins in self._ins_hits:
             if r.contains(pos):
@@ -612,6 +646,10 @@ class GenomePanel(QWidget):
         self.region.insertions = ins
         self.region.update()
 
+    def set_circular(self, on: bool):
+        self.region.circular = bool(on)
+        self.region.update()
+
     def add_orf_track(self, label: str, items: list[tuple[int, int, int, str, str]], color: str = "#7d3c98",
                       replace: bool = True):
         """items: (start, end, strand, name, tooltip) in reference coordinates."""
@@ -706,7 +744,7 @@ class GenomePanel(QWidget):
                     return
                 pad = max(2000, len(g) // 2)
                 self.set_window(g.start - pad, g.end + pad)
-                self.focusRequested.emit(g.start, g.end)
-                self.info.setText(f"{g.name}: {fmt_bp(g.start + 1)}-{fmt_bp(g.end)}")
+                self.focusRequested.emit(g.start, min(g.end, self.length))
+                self.info.setText(f"{g.name}: {fmt_span(g.start, g.end, self.length if g.end > self.length else None)}")
                 return
         self.info.setText("Not found")

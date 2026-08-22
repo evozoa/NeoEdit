@@ -12,7 +12,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QBrush, QFont, QFontMetrics, 
                            QPalette, QCursor)
 from PySide6.QtWidgets import QWidget, QToolTip, QSizePolicy
 
-from ..genome.annotations import Annotation, Gene
+from ..genome.annotations import Annotation, Gene, fmt_span
 
 TWO_PI = 2 * math.pi
 
@@ -289,7 +289,7 @@ class CircularView(QWidget):
     def mouseMoveEvent(self, e):
         g = self._gene_at(e.position())
         if g:
-            QToolTip.showText(QCursor.pos(), f"<b>{g.name}</b> {g.start + 1:,}-{g.end:,} "
+            QToolTip.showText(QCursor.pos(), f"<b>{g.name}</b> {fmt_span(g.start, g.end, self.length)} "
                               f"({'+' if g.strand > 0 else '-'}) {g.biotype}", self)
             self.setCursor(Qt.PointingHandCursor)
         else:

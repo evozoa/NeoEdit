@@ -122,7 +122,10 @@ def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
         try:
             with open(path, "r", errors="replace") as fh:
                 for rec in SeqIO.parse(fh, fmt):
-                    if str(rec.annotations.get("topology", "")).lower() == "circular":
+                    topo = str(rec.annotations.get("topology", "")).lower()
+                    if topo in ("circular", "linear"):
+                        model.topology_known = True
+                    if topo == "circular":
                         model.circular = True
                     break
         except Exception:
@@ -132,13 +135,36 @@ def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
         from .alignment import Feature
         with open(path, "r", errors="replace") as fh:
             for ri, rec in enumerate(SeqIO.parse(fh, fmt)):
+                L = len(rec.seq)
                 for f in rec.features:
                     if f.type == "source":
                         continue
                     label = f.qualifiers.get("gene", f.qualifiers.get("product", f.qualifiers.get("label", [f.type])))[0]
-                    model.features.append(Feature(ri, int(f.location.start), int(f.location.end),
-                                                  f.location.strand or 1, f.type, str(label)))
+                    strand = f.location.strand or 1
+                    for a, b in feature_pieces(f, L):
+                        model.features.append(Feature(ri, a, b, strand, f.type, str(label)))
     return model
+
+
+def feature_pieces(f, length: int) -> list[tuple[int, int]]:
+    """Genomic [start,end) span(s) of a Biopython feature: one span normally, but a location
+    that jumps back past the origin (join(16024..16569,1..576)) gives its two pieces rather
+    than a span covering the whole molecule."""
+    parts = [(int(p.start), int(p.end)) for p in f.location.parts]
+    if len(parts) < 2:
+        return [(int(f.location.start), int(f.location.end))]
+    if (f.location.strand or 1) < 0:
+        parts = parts[::-1]
+    wrapped = any(parts[i + 1][0] < parts[i][1] for i in range(len(parts) - 1))
+    if not wrapped:
+        return [(min(a for a, _ in parts), max(b for _, b in parts))]
+    head, tail = [], []
+    cur = head
+    for i, (a, b) in enumerate(parts):
+        if i and a < parts[i - 1][1]:
+            cur = tail
+        cur.append((a, b))
+    return [(min(a for a, _ in head), max(b for _, b in head)), (min(a for a, _ in tail), max(b for _, b in tail))]
 
 
 def loads(text: str, fmt: str) -> AlignmentModel:

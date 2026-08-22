@@ -20,7 +20,7 @@ class ORFFinderDialog(QDialog):
     featuresReady = Signal(list)               # list[Feature]
     orfsFound = Signal(list, int)              # list[ORF], genetic code table
 
-    def __init__(self, model, rows: list[int], parent=None, default_table=1):
+    def __init__(self, model, rows: list[int], parent=None, default_table=1, circular: bool = False):
         super().__init__(parent)
         self.setWindowTitle("ORF Finder")
         self.resize(900, 600)
@@ -49,6 +49,10 @@ class ORFFinderDialog(QDialog):
         self.both = QCheckBox("Both strands"); self.both.setChecked(True)
         self.partial = QCheckBox("Include partial ORFs at sequence ends (incomplete stops)"); self.partial.setChecked(True)
         self.nested = QCheckBox("Report nested ORFs (alternative starts in same frame)")
+        self.circ_cb = QCheckBox("Circular molecule: reading frames continue across the origin")
+        self.circ_cb.setChecked(bool(circular))
+        self.circ_cb.setToolTip("Follows the window's topology setting; an ORF that crosses the origin is reported once, "
+                                "with an end coordinate beyond the sequence length")
         form.addRow("Sequence", self.seq_combo)
         form.addRow("Genetic code", self.table)
         form.addRow("Min length (aa)", self.min_aa)
@@ -56,6 +60,7 @@ class ORFFinderDialog(QDialog):
         form.addRow("", self.both)
         form.addRow("", self.partial)
         form.addRow("", self.nested)
+        form.addRow("", self.circ_cb)
         top.addWidget(params, 1)
         lay.addLayout(top)
 
@@ -137,12 +142,15 @@ class ORFFinderDialog(QDialog):
             seq = self.model.rows[r].seq
             found = OF.find_orfs(seq, table=self.table.currentData(), min_aa=self.min_aa.value(),
                                  start_mode=self.start_mode.currentData(), both_strands=self.both.isChecked(),
-                                 allow_partial=self.partial.isChecked(), nested=self.nested.isChecked(), row=r)
+                                 allow_partial=self.partial.isChecked(), nested=self.nested.isChecked(),
+                                 circular=self.circ_cb.isChecked(), row=r)
             self.orfs.extend(found)
         self._loading = True
         for i, o in enumerate(self.orfs):
             self.table_w.insertRow(i)
             partial = ("5'" if o.partial5 else "") + ("3'" if o.partial3 else "")
+            if o.wraps:
+                partial = (partial + " " if partial else "") + "across origin"
             host = self._host_gene(o)
             if not o.name:
                 o.name, o.extra["note"] = GX.suggest_mdp_name(o, host)
@@ -173,7 +181,7 @@ class ORFFinderDialog(QDialog):
         if not o:
             return
         gm = OF.gap_map(self.model.rows[o.row].seq)
-        f = o.to_feature(gm)
+        f = o.to_features(gm)[0]
         self.orfSelected.emit(o.row, f.start, f.end)
         self.detail.setPlainText(f"{self.model.rows[o.row].name}  {o.start + 1}-{o.end} ({'+' if o.strand > 0 else '-'}{o.frame})  "
                                  f"table {o.table}\n\nProtein ({o.length_aa} aa):\n{o.aa}\n\nNucleotide:\n{o.nt}")
@@ -184,7 +192,7 @@ class ORFFinderDialog(QDialog):
             gm = OF.gap_map(self.model.rows[o.row].seq)
             if not o.name:
                 o.name = f"ORF{k}"
-            feats.append(o.to_feature(gm))
+            feats.extend(o.to_features(gm))
         if feats:
             self.featuresReady.emit(feats)
             self.status.setText(f"Added {len(feats)} features")
@@ -232,7 +240,8 @@ class ORFFinderDialog(QDialog):
         row = rows[0]
         dlg = GenBankExportOptions(self, table=self.table.currentData(),
                                    seq_name=self.model.rows[row].name,
-                                   source_path=getattr(self.parent(), "model", None) and getattr(self.parent().model, "path", None))
+                                   source_path=getattr(self.parent(), "model", None) and getattr(self.parent().model, "path", None),
+                                   circular=self.circ_cb.isChecked())
         if not dlg.exec():
             return
         opts = dlg.values()
@@ -297,7 +306,7 @@ class ORFFinderDialog(QDialog):
 class GenBankExportOptions(QDialog):
     """How to write the ORFs into a GenBank record."""
 
-    def __init__(self, parent=None, table=1, seq_name="", source_path=None):
+    def __init__(self, parent=None, table=1, seq_name="", source_path=None, circular: bool | None = None):
         super().__init__(parent)
         self.setWindowTitle("Export annotated GenBank")
         self.resize(620, 340)
@@ -324,6 +333,8 @@ class GenBankExportOptions(QDialog):
         self.record_id = QLineEdit(seq_name)
         self.organism = QLineEdit("")
         self.topology = QComboBox(); self.topology.addItems(["circular", "linear"])
+        if circular is not None:
+            self.topology.setCurrentIndex(0 if circular else 1)
         form.addRow("Genetic code for these ORFs", self.table)
         form.addRow("", self.cytoplasmic)
         form.addRow("Feature type", self.ftype)

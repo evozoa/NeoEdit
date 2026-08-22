@@ -56,6 +56,16 @@ actually use, on a codebase that can keep evolving:
   `/transl_table=1`; pin it as the reference and the MDPs appear by name, in their own
   color, on the map, the circle and the grid. Peptides are also shipped as
   `resources/mdp_reference_peptides.fasta` for naming ORFs in other taxa by similarity.
+* **Circular molecules, properly** – topology is an explicit per-molecule choice
+  (Topology box on the toolbar, status-bar indicator, Sequence ▸ Circular molecule; taken
+  from a GenBank record when declared, otherwise asked once in a bar above the grid when a
+  reference is adopted). When circular: features that cross the origin (the D-loop's
+  `join(16024..16569,1..576)`, NCBI's two-row GFF genes) stay *one* feature in unwrapped
+  coordinates, drawn at both ends of the region view (with an origin marker), as one arc on
+  the circular map, and as two pieces in the grid; the ORF finder scans straight through
+  the origin and reports an origin-crossing ORF once (`across origin`), the amino-acid line
+  translates it in frame on both sides, and GenBank export writes `join(a..L,1..b)`;
+  restriction search defaults to the circular mode.
 * **Circular map** – mitogenome/plasmid view with strand-separated gene arrows, GC
   content and GC skew rings, focal wedge synced to the grid; SVG/PNG export.
 * **Primer design across an alignment** – conserved (universal) or discriminating
