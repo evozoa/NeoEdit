@@ -157,3 +157,88 @@ def test_topology_choice_gui(tmp_path):
     assert MainWindow._wrap_pieces(16000, 16569 + 100, 1, 16569) == [(16000, 16569, 0), (0, 100, (3 - 569 % 3) % 3)]
     assert MainWindow._wrap_pieces(16000, 16569 + 100, -1, 16569) == [(16000, 16569, (3 - 100 % 3) % 3), (0, 100, 0)]
     w.model.dirty = False; w.close()
+
+
+def test_rotate_model_and_annotation():
+    from neoedit.model import AlignmentModel, SequenceRow, Feature
+    seq = "AAAACCCCGGGGTTTT"                  # 16 bp
+    m = AlignmentModel([SequenceRow("a", seq), SequenceRow("b", seq.lower())], "dna")
+    m.features = [Feature(0, 2, 6, 1, "ORF", "x"), Feature(0, 12, 16, 1, "ORF", "y")]
+    m.rotate(4)                               # old column 4 -> 0
+    assert m.rows[0].seq == "CCCCGGGGTTTTAAAA" and m.rows[1].seq == "ccccggggttttaaaa"
+    fx = [f for f in m.features if f.label == "x"]; fy = [f for f in m.features if f.label == "y"]
+    assert [(f.start, f.end) for f in fy] == [(8, 12)]
+    assert sorted((f.start, f.end) for f in fx) == [(0, 2), (14, 16)]      # x now crosses the origin: two pieces
+    m.rotate(14)                              # pieces meet again and re-join
+    assert [(f.start, f.end) for f in m.features if f.label == "x"] == [(0, 4)]
+    assert m.rows[0].seq == "AACCCCGGGGTTTTAA"
+    m.rotate(0, flip=True)
+    assert m.rows[0].seq == str(Seq("AACCCCGGGGTTTTAA").reverse_complement())
+    assert [(f.start, f.end, f.strand) for f in m.features if f.label == "x"] == [(12, 16, -1)]
+    # annotation: a gene across the origin is whole again once the origin sits at its start
+    ann = GA.Annotation(); ann.lengths["c"] = 1000; ann.circular["c"] = True
+    t = GA.Transcript("t", "g", 900, 1050, 1, "CDS", [(900, 1000), (1000, 1050)], [(900, 1000), (1000, 1050)])
+    ann.add_gene(GA.Gene("g", "g", "c", 900, 1050, 1, "CDS", [t], attrs={"wraps_origin": "true"}))
+    ann.add_gene(GA.Gene("h", "h", "c", 100, 200, -1, "CDS", [GA.Transcript("th", "h", 100, 200, -1, "CDS", [(100, 200)], [(100, 200)])]))
+    ann.finalize()
+    GA.rotate_annotation(ann, "c", 900, 1000)
+    g = ann.find("g")[0]; h = ann.find("h")[0]
+    assert (g.start, g.end, "wraps_origin" in g.attrs) == (0, 150, False) and g.transcripts[0].cds == [(0, 100), (100, 150)]
+    assert (h.start, h.end) == (200, 300)
+    # flip: minus-strand h reads forward when the origin is put at its 5' end (= its old end) and the strand is flipped
+    GA.rotate_annotation(ann, "c", 300, 1000, flip=True)
+    h = ann.find("h")[0]; g = ann.find("g")[0]
+    assert (h.start, h.end, h.strand) == (0, 100, 1)
+    assert (g.start, g.end, g.strand) == (150, 300, -1)          # (0,150)+ -> rotated to 700 -> mirrored
+    assert GA.largest_gap_origin([(900, 1050), (100, 200)], 1000) == 900       # widest gap 200..900 -> next feature starts at 900
+    assert GA.largest_gap_origin([(0, 1000)], 1000) is None
+
+
+def test_set_origin_gui():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    import sys
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(sys.argv)
+    from neoedit.ui.main_window import MainWindow
+    from neoedit.ui.dialogs.misc_dialogs import OriginDialog
+    if not os.path.exists(RCRS):
+        pytest.skip("rCRS example missing")
+    w = MainWindow(); w.resize(1100, 700); w.show()
+    w.open_path(RCRS); app.processEvents()
+    seq0 = w.model.rows[0].seq
+    L = len(seq0)
+    co = w.annotation.find("COX1")[0]
+    cox_start = co.start
+    # rotate so that COX1 is split across the origin, then use Set origin at COX1 -> whole again
+    w.rotate_origin(cox_start + 300)
+    assert w.model.rows[0].seq == seq0[cox_start + 300:] + seq0[:cox_start + 300]
+    co = w.annotation.find("COX1")[0]
+    assert co.end > L and co.attrs.get("wraps_origin") == "true"
+    assert [f for f in w._translation_regions(0, 0, 10) if f[4] == "COX1"]            # visible right after the origin...
+    d = OriginDialog(L, [(g.name, g.start, g.end, g.strand) for g in w.annotation.genes_by_seq["NC_012920.1"]], 0, w)
+    idx = next(i for i in range(d.feat.count()) if d.feat.itemText(i).startswith("COX1 "))
+    d.r_feat.setChecked(True); d.feat.setCurrentIndex(idx)
+    pos, flip = d.values()
+    assert pos == co.start and not flip
+    w.rotate_origin(pos, flip)
+    co = w.annotation.find("COX1")[0]
+    assert (co.start, co.end) == (0, 1542) and "wraps_origin" not in co.attrs
+    assert w.model.rows[0].seq[:12] == "ATGTTCGCCGAC"                                  # COX1 begins at position 1
+    regs = [r for r in w._translation_regions(0, 0, 2000) if r[4] == "COX1"]
+    assert len(regs) == 1 and regs[0][:2] == (0, 1542) and regs[0][5] == 0
+    # default suggestion: tRNA-Phe (vertebrate mitogenome convention) is preselected
+    d2 = OriginDialog(L, [(g.name, g.start, g.end, g.strand) for g in w.annotation.genes_by_seq["NC_012920.1"]], 0, w)
+    assert d2.feat.currentText().upper().startswith("TRNF")
+    # minus-strand ND6 at the origin with a flip reads forward from position 1
+    nd6 = w.annotation.find("ND6")[0]
+    d3 = OriginDialog(L, [(g.name, g.start, g.end, g.strand) for g in w.annotation.genes_by_seq["NC_012920.1"]], 0, w)
+    j = next(i for i in range(d3.feat.count()) if d3.feat.itemText(i).startswith("ND6 "))
+    d3.r_feat.setChecked(True); d3.feat.setCurrentIndex(j)
+    assert d3.flip.isChecked()
+    pos, flip = d3.values(); assert flip and pos == nd6.end % L
+    w.rotate_origin(pos, flip)
+    nd6 = w.annotation.find("ND6")[0]
+    assert (nd6.start, nd6.end, nd6.strand) == (0, 525, 1)
+    assert str(Seq(w.model.rows[0].seq[:525]).translate(table=2)).startswith("MMYALF")
+    w.model.dirty = False; w.close()

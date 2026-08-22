@@ -215,6 +215,67 @@ def _unwrap_parts(parts: list[tuple[int, int]], length: int) -> tuple[list[tuple
     return out, wrapped
 
 
+def rotate_annotation(ann: Annotation, seqid: str, offset: int, length: int, flip: bool = False):
+    """Move the origin of a circular molecule's annotation: old position `offset` becomes 0.
+    With `flip`, the molecule is then reverse-complemented (positions mirror, strands swap).
+    Genes keep unwrapped coordinates, so a gene that now crosses the origin gets end > length."""
+    L = length
+    for g in ann.genes_by_seq.get(seqid, []):
+        n = g.end - g.start
+        ns = (g.start - offset) % L
+        delta = ns - g.start
+        g.start, g.end = ns, ns + n
+        for t in g.transcripts:
+            t.start += delta; t.end += delta
+            t.exons = [(a + delta, b + delta) for a, b in t.exons]
+            t.cds = [(a + delta, b + delta) for a, b in t.cds]
+        if flip:
+            def mirror(a, b):
+                a2, b2 = L - b, L - a
+                if a2 < 0:
+                    a2 += L; b2 += L
+                return a2, b2
+            g.start, g.end = mirror(g.start, g.end)
+            g.strand = -g.strand
+            for t in g.transcripts:
+                t.start, t.end = mirror(t.start, t.end)
+                t.strand = -t.strand
+                t.exons = sorted(mirror(a, b) for a, b in t.exons)
+                t.cds = sorted(mirror(a, b) for a, b in t.cds)
+        g.attrs.pop("wraps_origin", None)
+        if g.end > L:
+            g.attrs["wraps_origin"] = "true"
+    ann.finalize()
+
+
+def largest_gap_origin(spans: list[tuple[int, int]], length: int) -> int | None:
+    """Given feature spans (unwrapped, may exceed `length`) on a circle, return the start of the
+    feature that follows the widest feature-free stretch — an origin no feature crosses."""
+    pieces = []
+    for a, b in spans:
+        for s, e in split_span(a, b, length):
+            if e > s:
+                pieces.append((s, e))
+    if not pieces:
+        return None
+    pieces.sort()
+    merged = [list(pieces[0])]
+    for s, e in pieces[1:]:
+        if s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    if len(merged) == 1 and merged[0][0] == 0 and merged[0][1] >= length:
+        return None                                       # fully covered: no gap at all
+    best, best_gap = None, -1
+    for i, (s, e) in enumerate(merged):
+        ns = merged[(i + 1) % len(merged)][0]
+        gap = (ns - e) % length if len(merged) > 1 else (length - (e - s))
+        if gap > best_gap:
+            best_gap, best = gap, ns
+    return best
+
+
 def unwrap_gene(g: Gene, length: int):
     """GFF/BED-style genes on a circular molecule: a transcript whose exons jump back to the
     start of the sequence is re-expressed in unwrapped coordinates (end > length).

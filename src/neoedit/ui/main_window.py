@@ -29,7 +29,7 @@ from .dialogs.primer_dialog import PrimerDialog
 from .dialogs.design_dialog import DesignDialog
 from .dialogs.restriction_dialog import RestrictionDialog
 from .dialogs.misc_dialogs import (FindDialog, StatsDialog, IdentityDialog, PlotDialog, AlignDialog,
-                                   PreferencesDialog, NewSequenceDialog, ConsensusDialog)
+                                   PreferencesDialog, NewSequenceDialog, ConsensusDialog, OriginDialog)
 from .dialogs.common import TextDialog
 from .dialogs.import_dialog import ImportDialog
 from .. import __version__
@@ -236,6 +236,9 @@ class MainWindow(QMainWindow):
                        tip="Anchor the gene models, chromosome map and coordinates to this sequence")
         self.a_circular = A("&Circular molecule", self._toggle_circular, None, True,
                             tip="Treat the sequence as circular (mitogenome, plasmid)")
+        self.a_origin = A("Set &origin (rotate circular molecule)…", self.set_origin,
+                          tip="Rotate the molecule so a position or the start of a gene (e.g. tRNA-Phe) becomes position 1; "
+                              "nothing is then split across the origin")
         self.a_grp_set = A("&Assign selected to group…", self.group_assign, "Ctrl+Shift+A")
         self.a_grp_clear = A("&Remove selected from group", lambda: self.model.set_group(self.view.target_rows(), ""))
         self.a_grp_color = A("Set group &color…", self.group_color)
@@ -345,7 +348,7 @@ class MainWindow(QMainWindow):
         self.group_menu.aboutToShow.connect(self._fill_group_menu)
         for a in (self.a_newseq, self.a_rename, self.a_delseq, self.a_dupseq, self.a_up, self.a_down, None,
                   self.a_revcomp, self.a_rev, self.a_comp, self.a_upper, self.a_lower, self.a_rmgaps, self.a_rna, self.a_dna, None,
-                  self.a_translate, self.a_sixframe, None, self.a_pin, self.a_settype, self.a_circular, self.a_blast):
+                  self.a_translate, self.a_sixframe, None, self.a_pin, self.a_settype, self.a_circular, self.a_origin, self.a_blast):
             s.addAction(a) if a else s.addSeparator()
         s.addSeparator(); s.addMenu(self.group_menu)
 
@@ -1050,6 +1053,69 @@ class MainWindow(QMainWindow):
 
     def _toggle_circular(self, on):
         self.set_topology(bool(on))
+
+    def set_origin(self):
+        """Rotate the (circular) molecule so a chosen point becomes position 1."""
+        if not self.model.nrows:
+            return
+        if self.genome:
+            QMessageBox.information(self, "Set origin", "Open the contig as a reference (Genome ▸ Open GenBank reference / import) "
+                                    "to rotate it; the indexed genome FASTA itself is read-only."); return
+        proj = self.proj(); L = proj.ref_len
+        seqid = self.genome_contig or self.model.rows[self.ref_index()].name
+        feats = []
+        if self.annotation:
+            for g in self.annotation.genes_by_seq.get(seqid, []):
+                feats.append((g.name, g.start, g.end, g.strand))
+        ref = self.ref_index()
+        for f in self.model.features:
+            if f.row == ref and f.type in ("ORF", "CDS", "gene"):
+                feats.append((f.label, proj.col_to_ref(f.start), proj.col_to_ref(f.end), f.strand))
+        cur = proj.col_to_ref(self.view.cur_col) if self.view.cur_row == ref else 0
+        d = OriginDialog(L, feats, cur, self, circular=bool(self.model.circular))
+        if not d.exec():
+            return
+        pos, flip = d.values()
+        self.rotate_origin(pos, flip)
+
+    def rotate_origin(self, pos: int, flip: bool = False):
+        """Reference position `pos` (0-based) becomes position 1 for every row; annotation and
+        ORF tracks follow; optional reverse-complement afterwards."""
+        proj = self.proj(); L = proj.ref_len
+        if not L:
+            return
+        pos %= L
+        col = proj.ref_to_col(pos)
+        seqid = self.genome_contig or self.model.rows[self.ref_index()].name
+        self.model.rotate(col, flip)
+        if self.annotation is not None:
+            GA.rotate_annotation(self.annotation, seqid, pos, L, flip)
+        # ORF tracks in the region view (reference coordinates)
+        for track in self.genome_panel.region.orf_tracks:
+            items = []
+            for it in track["items"]:
+                a, b = it[0], it[1]; n = b - a
+                ns = (a - pos) % L
+                st = it[2]
+                if flip:
+                    ne = L - ns; ns = ne - n
+                    if ns < 0:
+                        ns += L; ne += L
+                    st = -st
+                items.append((ns, ns + n, st) + tuple(it[3:]))
+            track["items"] = items
+        self._proj = None; self._proj_row = -1; self._ref_ungapped = None; self._ins_dirty = True
+        if self.genome_contig:
+            self._enter_reference_mode(self.annotation)
+        self.view.viewport().update(); self.genome_panel.region.update()
+        circ = getattr(self, "_circ", None)
+        if circ is not None:
+            try:
+                circ.view._gc = None; circ.view.update()
+            except RuntimeError:
+                self._circ = None
+        self.statusBar().showMessage(f"Origin moved to former position {pos + 1:,}" + (" and strand flipped" if flip else "")
+                                     + " — sequences, features and gene models rotated together (history cleared)", 8000)
 
     def _topo_combo_changed(self, i):
         if getattr(self, "_syncing_topo", False):

@@ -65,7 +65,11 @@ actually use, on a codebase that can keep evolving:
   the circular map, and as two pieces in the grid; the ORF finder scans straight through
   the origin and reports an origin-crossing ORF once (`across origin`), the amino-acid line
   translates it in frame on both sides, and GenBank export writes `join(a..L,1..b)`;
-  restriction search defaults to the circular mode.
+  restriction search defaults to the circular mode. **Sequence ▸ Set origin…** rotates the
+  molecule so a position, the start of a chosen gene (tRNA-Phe is preselected for vertebrate
+  mitogenomes) or the widest feature-free gap becomes position 1 — optionally
+  reverse-complementing so a minus-strand gene reads forward — with sequences, grid
+  features, gene models and ORF tracks rotating together, so nothing is split across the origin.
 * **Circular map** – mitogenome/plasmid view with strand-separated gene arrows, GC
   content and GC skew rings, focal wedge synced to the grid; SVG/PNG export.
 * **Primer design across an alignment** – conserved (universal) or discriminating

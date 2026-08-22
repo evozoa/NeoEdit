@@ -385,3 +385,75 @@ class ConsensusDialog(QDialog):
     def save(self):
         save_text(self, f">{self.name.text().strip() or 'Consensus'}\n{self._cons}\n", "Save consensus",
                   "FASTA (*.fasta *.fa);;All files (*)", (self.name.text().strip() or "consensus") + ".fasta")
+
+
+# ------------------------------------------------------------------ Set origin (circular)
+class OriginDialog(QDialog):
+    """Choose where a circular molecule should start: a position, the start of an annotated
+    gene / feature (so it is not split across the origin), or the widest feature-free gap."""
+    STANDARD = ("trnf", "trn-f", "trna-phe", "mt-tf", "tRNA-Phe".lower(), "trnp", "phe")
+
+    def __init__(self, length: int, features, cursor_pos: int = 0, parent=None, circular: bool = True):
+        """features: list of (label, start, end, strand) in 0-based reference coordinates (unwrapped)."""
+        super().__init__(parent)
+        self.setWindowTitle("Set origin (rotate circular molecule)")
+        self.resize(560, 360)
+        self.length = max(1, length)
+        self.features = list(features)
+        lay = QVBoxLayout(self)
+        info = QLabel("Rotate the molecule so the chosen point becomes position 1. Sequences, grid features, "
+                      "gene models and ORF tracks rotate together; a gene placed at the origin is no longer split "
+                      "across it." + ("" if circular else "<br><b>The molecule is not marked circular</b> — rotating a linear sequence rearranges it."))
+        info.setWordWrap(True); lay.addWidget(info)
+        form = QFormLayout()
+        from PySide6.QtWidgets import QRadioButton, QButtonGroup
+        self.r_pos = QRadioButton("Position"); self.r_feat = QRadioButton("Start of feature"); self.r_gap = QRadioButton("Largest gap between features")
+        grp = QButtonGroup(self)
+        for r in (self.r_pos, self.r_feat, self.r_gap):
+            grp.addButton(r)
+        self.pos = QSpinBox(); self.pos.setRange(1, self.length); self.pos.setValue(min(self.length, max(1, cursor_pos + 1)))
+        self.pos.setSuffix(f"  (1–{self.length:,})")
+        form.addRow(self.r_pos, self.pos)
+        self.feat = QComboBox()
+        std = -1
+        for i, (lab, a, b, st) in enumerate(sorted(self.features, key=lambda f: f[1])):
+            from ...genome.annotations import fmt_span
+            self.feat.addItem(f"{lab}   {fmt_span(a, b, self.length)} ({'+' if st > 0 else '-'})", i)
+            if std < 0 and lab.lower().replace("_", "-") in self.STANDARD or lab.lower().startswith(("trnf", "mt-tf", "trna-phe")):
+                std = self.feat.count() - 1
+        self._sorted = sorted(self.features, key=lambda f: f[1])
+        if std >= 0:
+            self.feat.setCurrentIndex(std)
+        form.addRow(self.r_feat, self.feat)
+        form.addRow(self.r_gap, QLabel("origin placed so that no annotated feature crosses it"))
+        lay.addLayout(form)
+        self.flip = QCheckBox("Reverse-complement as well, so the chosen feature reads forward (minus-strand genes)")
+        lay.addWidget(self.flip)
+        self.note = QLabel("Vertebrate mitogenomes conventionally start at tRNA-Phe (trnF), followed by 12S rRNA."
+                           if std >= 0 else "")
+        self.note.setStyleSheet("color: gray"); self.note.setWordWrap(True); lay.addWidget(self.note)
+        (self.r_feat if self.features else self.r_pos).setChecked(True)
+        self.feat.setEnabled(bool(self.features)); self.r_feat.setEnabled(bool(self.features)); self.r_gap.setEnabled(bool(self.features))
+        self.feat.currentIndexChanged.connect(self._feat_changed); self._feat_changed()
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject); lay.addWidget(bb)
+
+    def _feat_changed(self, *_a):
+        i = self.feat.currentData()
+        if i is None or not self._sorted:
+            return
+        _lab, _a, _b, st = self._sorted[i]
+        self.flip.setChecked(st < 0)
+
+    def values(self) -> tuple[int, bool]:
+        """-> (0-based reference position that becomes position 1, reverse-complement?)"""
+        from ...genome.annotations import largest_gap_origin
+        flip = self.flip.isChecked()
+        if self.r_feat.isChecked() and self._sorted:
+            _lab, a, b, st = self._sorted[self.feat.currentData()]
+            # after rotation + flip the feature occupies [0, len): rotate to its 5' end
+            return ((b % self.length) if flip else (a % self.length)), flip
+        if self.r_gap.isChecked() and self._sorted:
+            o = largest_gap_origin([(a, b) for _l, a, b, _s in self._sorted], self.length)
+            return (o if o is not None else 0), flip
+        return self.pos.value() - 1, flip

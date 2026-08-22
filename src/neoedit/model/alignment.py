@@ -395,6 +395,55 @@ class AlignmentModel:
     def reverse_complement(self, rows: Iterable[int]):
         self._transform(rows, lambda s: str(Seq(s).reverse_complement()), "Reverse complement")
 
+    def rotate(self, offset: int, flip: bool = False):
+        """Move the origin of a circular molecule: alignment column `offset` becomes column 0
+        for every row (rows are padded to equal width first), optionally reverse-complementing
+        afterwards so the molecule reads the other way round. Per-row features follow, split
+        where they now cross the origin and re-joined where two pieces meet again.
+        Not undoable (features/annotations have no history): the history is cleared."""
+        W = self.width
+        if not W:
+            return
+        offset %= W
+        for r in self.rows:
+            s = self._pad(r.seq, W)
+            s = s[offset:] + s[:offset]
+            if flip:
+                s = str(Seq(s).reverse_complement())
+            r.seq = s
+        pieces = []
+        for f in self.features:
+            a, b = f.start - offset, f.end - offset
+            spans = []
+            if a < 0 and b > 0:              # the feature now straddles the new origin
+                spans = [(a + W, W), (0, b)]
+            else:
+                if a < 0:
+                    a += W; b += W
+                spans = [(a, min(b, W))] if b <= W else [(a, W), (0, b - W)]
+            for s0, e0 in spans:
+                if e0 <= s0:
+                    continue
+                g = Feature(f.row, s0, e0, f.strand, f.type, f.label, f.color, dict(f.data))
+                if flip:
+                    g.start, g.end, g.strand = W - e0, W - s0, -g.strand
+                g.data.pop("phase", None); g.data.pop("wrap_part", None)
+                pieces.append(g)
+        # re-join pieces of one feature that are now contiguous (same row/type/label/strand)
+        pieces.sort(key=lambda g: (g.row, g.type, g.label, g.strand, g.start))
+        merged: list[Feature] = []
+        for g in pieces:
+            m = merged[-1] if merged else None
+            if m is not None and (m.row, m.type, m.label, m.strand) == (g.row, g.type, g.label, g.strand) and m.end == g.start:
+                m.end = g.end
+            else:
+                merged.append(g)
+        self.features = merged
+        self._undo.clear(); self._redo.clear()
+        self.dirty = True
+        self._emit("data")
+        self._emit("features")
+
     def complement(self, rows: Iterable[int]):
         self._transform(rows, lambda s: str(Seq(s).complement()), "Complement")
 
