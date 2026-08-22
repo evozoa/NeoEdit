@@ -8,7 +8,7 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 
 from neoedit.remote import RemoteError
-from neoedit.remote import ncbi as N, ensembl as E
+from neoedit.remote import ncbi as N, ensembl as E, ucsc as U
 from neoedit.remote.http import write_download, safe_filename
 
 HERE = os.path.dirname(__file__)
@@ -237,6 +237,15 @@ def test_import_dialog_wiring(tmp_path):
     dlg.e_type.setCurrentIndex(2)
     with pytest.raises(RemoteError):
         dlg._ensembl_job()
+    # UCSC jobs: gene / region; the typed assembly id is used before the list has loaded
+    dlg.tabs.setCurrentIndex(2)
+    assert dlg._genome_value() == "hg38"
+    dlg.u_gene.setText("TP53"); job, busy = dlg._ucsc_job(); assert busy == "Fetching TP53 from UCSC hg38…"
+    dlg.u_r_region.setChecked(True); dlg.u_region.setText("chrM:1-16569:-"); job, busy = dlg._ucsc_job(); assert "chrM:1-16569" in busy
+    dlg.u_region.setText("")
+    with pytest.raises(RemoteError):
+        dlg._ucsc_job()
+    dlg.tabs.setCurrentIndex(0)
     # a finished fetch hands the file to the main window, which always *adds* the records
     example = os.path.join(HERE, "..", "examples", "cox1_demo.fasta")
     dlg.n_ids.setPlainText("NC_012920.1")
@@ -276,3 +285,71 @@ def test_live_ensembl_and_ncbi(tmp_path):
     n = N.NCBIClient()
     path, text = n.download("nuccore", ["NC_012920.1"], "fasta", str(tmp_path), seq_start=577, seq_stop=647)
     assert text.startswith(">NC_012920.1:577-647") and N.count_records(text, "fasta") == 1
+
+
+# ---------------------------------------------------------------- UCSC (offline)
+def test_ucsc_offline(tmp_path):
+    # TP53-like minus-strand genePred: two coding exons; UCSC frames 1 and 2 -> GFF phases 2 and 1
+    gp = {"name": "NM_000546.6", "name2": "TP53", "chrom": "chr17", "strand": "-", "txStart": 1000, "txEnd": 1400,
+          "cdsStart": 1050, "cdsEnd": 1350, "exonCount": 2, "exonStarts": "1000,1200,", "exonEnds": "1100,1400,",
+          "exonFrames": "1,2,"}
+    nc = {"name": "NR_1.1", "name2": "LINC", "chrom": "chr17", "strand": "+", "txStart": 1500, "txEnd": 1600,
+          "cdsStart": 1600, "cdsEnd": 1600, "exonCount": 1, "exonStarts": "1500,", "exonEnds": "1600,", "exonFrames": "-1,"}
+    feats = U.genepred_to_features([gp, nc])
+    kinds = [(f["feature_type"], f["start"], f["end"], f["strand"]) for f in feats]
+    assert ("gene", 1001, 1400, -1) in kinds and ("transcript", 1001, 1400, -1) in kinds
+    assert ("exon", 1001, 1100, -1) in kinds and ("cds", 1051, 1100, -1) in kinds and ("cds", 1201, 1350, -1) in kinds
+    assert [f["phase"] for f in feats if f["feature_type"] == "cds"] == [2, 1]
+    assert [f for f in feats if f["id"] == "LINC"][0]["biotype"] == "ncRNA"
+    rec = E.build_record("A" * 500, "chr17", 901, 1400, feats)
+    cds = [f for f in rec.features if f.type == "CDS"][0]
+    assert cds.qualifiers["codon_start"] == [2] and cds.qualifiers["transcript_id"] == ["NM_000546.6"]
+    # client against canned responses
+    import random
+    rnd = random.Random(3)
+    dna = "".join(rnd.choice("acgtACGT") for _ in range(200))
+    routes = [
+        ("genome=nope", json.dumps({"error": "can not find genome='nope'"})),
+        ("/list/ucscGenomes", json.dumps({"ucscGenomes": {
+            "hg38": {"organism": "Human", "scientificName": "Homo sapiens", "description": "Dec. 2013 (GRCh38/hg38)", "active": 1, "orderKey": 50},
+            "danRer11": {"organism": "Zebrafish", "scientificName": "Danio rerio", "description": "May 2017", "active": 1, "orderKey": 26172}}})),
+        ("/getData/sequence", json.dumps({"dna": dna})),
+        ("track=ncbiRefSeq", json.dumps({"ncbiRefSeq": []})),
+        ("track=refGene", json.dumps({"refGene": [dict(gp, txStart=1000 - 900, txEnd=1400 - 900, cdsStart=1050 - 900, cdsEnd=1350 - 900,
+                                                        exonStarts="100,300,", exonEnds="200,500,")]})),
+        ("/search", json.dumps({"positionMatches": [
+            {"trackName": "knownGene", "matches": [{"position": "chr17:101-500", "posName": "TP53 (ENST1)", "description": "x"}]},
+            {"trackName": "hgnc", "matches": [{"position": "chr17:101-500", "posName": "TP53", "description": "tumor protein p53"}]}]})),
+    ]
+    ff = FakeFetch(routes)
+    c = U.UCSCClient(fetch=ff)
+    gs = c.genomes()
+    assert [g.id for g in gs] == ["hg38", "danRer11"] and gs[0].label().startswith("hg38 — Human")
+    hit = c.search("hg38", "tp53")
+    assert hit.track == "hgnc" and (hit.chrom, hit.start, hit.end) == ("chr17", 101, 500)
+    used, rows = c.gene_models("hg38", "chr17", 100, 500)             # ncbiRefSeq empty -> refGene
+    assert used == "refGene" and len(rows) == 1
+    assert U.strand_of_hit(hit, rows) == -1
+    assert U.strand_of_hit(U.Hit("MT-ND6", "chrM", 14149, 14673, "hgnc"),
+                           [{"name": "YP_1", "name2": "ND6", "strand": "-", "txStart": 14148, "txEnd": 14673},
+                            {"name": "YP_2", "name2": "ND5", "strand": "+", "txStart": 12336, "txEnd": 14148}]) == -1
+    rec = c.fetch_genomic("hg38", "chr17", 101, 300, strand=-1, hit=hit, species="Homo sapiens")
+    assert rec.id == "TP53" and len(rec.seq) == 200 and str(rec.seq).isupper() and rec.annotations["ucsc_track"] == "refGene"
+    assert "UCSC hg38 refGene" in rec.description
+    assert any(f.type == "CDS" for f in rec.features)
+    rec2 = c.fetch_genomic("hg38", "chr17", 101, 300, keep_mask=True, annotate=False)
+    assert str(rec2.seq) == dna and rec2.annotations["ucsc_track"] == "" and [f.type for f in rec2.features] == ["source"]
+    with pytest.raises(RemoteError, match="can not find genome"):
+        c.sequence("nope", "chr1", 0, 10)
+    p = E.save_record(rec, str(tmp_path))
+    assert next(SeqIO.parse(p, "genbank")).id == "TP53"
+
+
+@pytest.mark.skipif(not LIVE, reason="set NEOEDIT_NET_TESTS=1 to hit UCSC")
+def test_live_ucsc():
+    c = U.UCSCClient()
+    hit = c.search("hg38", "MT-ND6")
+    rec = c.fetch_genomic("hg38", hit.chrom, hit.start, hit.end, strand=-1, hit=hit, species="Homo sapiens")
+    cds = [f for f in rec.features if f.type == "CDS" and f.qualifiers["gene"] == ["ND6"]][0]
+    aa = str(cds.extract(rec.seq).translate(table=2))
+    assert aa.startswith("MMYALF") and aa.endswith("*") and "*" not in aa[:-1]

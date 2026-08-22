@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, Q
                                QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QFileDialog,
                                QMessageBox, QButtonGroup, QDialogButtonBox, QAbstractItemView, QSizePolicy)
 
-from ...remote import RemoteError, ncbi as N, ensembl as E
+from ...remote import RemoteError, ncbi as N, ensembl as E, ucsc as U
 from .common import NumItem
 
 
@@ -44,7 +44,7 @@ class ImportDialog(QDialog):
 
     def __init__(self, parent, settings, on_add, autoload: bool = True):
         super().__init__(parent)
-        self.setWindowTitle("Import from NCBI / Ensembl")
+        self.setWindowTitle("Import from NCBI / Ensembl / UCSC")
         self.setModal(False)
         self.resize(760, 640)
         self.settings = settings
@@ -53,11 +53,14 @@ class ImportDialog(QDialog):
         self._workers: list[_Worker] = []
         self._species_cache: dict[str, list[E.Species]] = {}
         self._ens_client: E.EnsemblClient | None = None
+        self._ucsc_client = U.UCSCClient()
+        self._genomes: list[U.Genome] = []
 
         lay = QVBoxLayout(self)
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_ncbi(), "NCBI")
         self.tabs.addTab(self._build_ensembl(), f"Ensembl {E.DEFAULT_RELEASE}")
+        self.tabs.addTab(self._build_ucsc(), "UCSC Genome Browser")
         self.tabs.currentChanged.connect(self._tab_changed)
         lay.addWidget(self.tabs, 1)
 
@@ -300,6 +303,8 @@ class ImportDialog(QDialog):
             self._ensure_server()
             if not self._species_cache:
                 self._load_species()
+        elif i == 2 and self.autoload and not self._genomes:
+            self._load_genomes()
 
     def _server_changed(self, *_a):
         self._ens_client = None
@@ -430,6 +435,154 @@ class ImportDialog(QDialog):
             return path, f"{client.release_note()}: {len(recs)} {seq_type} sequence(s) for {lk.display_name or lk.id} → {path}"
         return job, f"Fetching {q} from Ensembl…"
 
+    # ------------------------------------------------------------ UCSC tab
+    def _build_ucsc(self) -> QWidget:
+        w = QWidget(); lay = QVBoxLayout(w)
+        form = QFormLayout()
+        self.u_genome = QComboBox(); self.u_genome.setEditable(True); self.u_genome.setInsertPolicy(QComboBox.NoInsert)
+        self.u_genome.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.u_genome.setEditText(self.settings.value("remote/ucsc_genome", "hg38"))
+        form.addRow("Assembly", self.u_genome)
+        self.u_hint = QLabel("UCSC assembly id (hg38, mm39, danRer11, …); the list loads when this tab is opened.")
+        self.u_hint.setStyleSheet("color: gray"); self.u_hint.setWordWrap(True)
+        form.addRow("", self.u_hint)
+        lay.addLayout(form)
+
+        qg = QGroupBox("What to fetch")
+        ql = QFormLayout(qg)
+        self.u_r_gene = QRadioButton("Gene symbol / accession"); self.u_r_region = QRadioButton("Region")
+        self.u_r_gene.setChecked(True)
+        grp = QButtonGroup(self); grp.addButton(self.u_r_gene); grp.addButton(self.u_r_region)
+        self.u_gene = QLineEdit(); self.u_gene.setPlaceholderText("BRCA1, TP53, NM_000546, MT-CO1 …")
+        self.u_gene.textEdited.connect(lambda _t: self.u_r_gene.setChecked(True))
+        self.u_gene.returnPressed.connect(self.ucsc_lookup)
+        grow = QHBoxLayout(); grow.addWidget(self.u_gene, 1)
+        self.b_ulookup = QPushButton("Look up"); self.b_ulookup.clicked.connect(self.ucsc_lookup); grow.addWidget(self.b_ulookup)
+        ql.addRow(self.u_r_gene, grow)
+        self.u_region = QLineEdit(); self.u_region.setPlaceholderText("chr17:43,044,295-43,170,245   or   chrM:1-16569:-   (1-based, optional strand)")
+        self.u_region.textEdited.connect(lambda _t: self.u_r_region.setChecked(True))
+        ql.addRow(self.u_r_region, self.u_region)
+        self.u_info = QLabel(""); self.u_info.setWordWrap(True); self.u_info.setStyleSheet("color: gray")
+        ql.addRow("", self.u_info)
+        lay.addWidget(qg)
+
+        sg = QGroupBox("Sequence")
+        sl = QFormLayout(sg)
+        self.u_track = QComboBox()
+        for lbl, val in U.TRACK_LABELS:
+            self.u_track.addItem(lbl, val)
+        sl.addRow("Gene models from", self.u_track)
+        frow = QHBoxLayout()
+        self.u_f5 = QSpinBox(); self.u_f5.setRange(0, 1_000_000); self.u_f5.setSuffix(" bp upstream")
+        self.u_f3 = QSpinBox(); self.u_f3.setRange(0, 1_000_000); self.u_f3.setSuffix(" bp downstream")
+        frow.addWidget(self.u_f5); frow.addWidget(self.u_f3); frow.addStretch(1)
+        sl.addRow("Flanks (gene)", frow)
+        self.u_annot = QCheckBox("Include gene models (genes, transcripts, CDS) as features"); self.u_annot.setChecked(True)
+        self.u_orient = QCheckBox("Orient to the gene's strand (reverse-complement minus-strand genes)"); self.u_orient.setChecked(True)
+        self.u_mask = QCheckBox("Keep UCSC soft-masking (lowercase repeats)")
+        for cb in (self.u_annot, self.u_orient, self.u_mask):
+            sl.addRow("", cb)
+        self.u_annot.toggled.connect(self.u_track.setEnabled)
+        lay.addWidget(sg)
+        lay.addStretch(1)
+        return w
+
+    def _load_genomes(self):
+        self._run(lambda: self._ucsc_client.genomes(), self._genomes_done, "Loading UCSC assemblies…", quiet=True)
+
+    def _genomes_done(self, genomes):
+        self._genomes = [g for g in genomes if g.active]
+        cur = self.u_genome.currentText().strip()
+        self.u_genome.blockSignals(True); self.u_genome.clear()
+        for g in self._genomes:
+            self.u_genome.addItem(g.label(), g.id)
+        self.u_genome.blockSignals(False)
+        idx = self.u_genome.findData(cur)
+        if idx >= 0:
+            self.u_genome.setCurrentIndex(idx)
+        else:
+            self.u_genome.setEditText(cur)
+        self.u_hint.setText(f"{len(self._genomes)} assemblies.")
+
+    def _genome_value(self) -> str:
+        cb = self.u_genome
+        text = cb.currentText().strip()
+        idx = cb.currentIndex()
+        if idx >= 0 and cb.itemText(idx) == text and cb.itemData(idx):
+            return cb.itemData(idx)
+        for i in range(cb.count()):
+            if cb.itemData(i) and (cb.itemData(i).lower() == text.lower() or cb.itemText(i).lower().startswith(text.lower() + " ")):
+                return cb.itemData(i)
+        return text.split(" ")[0]
+
+    def _genome_species(self, gid: str) -> str:
+        for g in self._genomes:
+            if g.id == gid:
+                return g.scientific_name or g.organism
+        return ""
+
+    def ucsc_lookup(self):
+        q = self.u_gene.text().strip()
+        if not q:
+            return
+        self.u_r_gene.setChecked(True)
+        gid = self._genome_value(); client = self._ucsc_client
+        self._run(lambda: client.search(gid, q), self._ucsc_lookup_done, f"Searching {gid} for {q}…")
+
+    def _ucsc_lookup_done(self, hit: U.Hit):
+        self.u_info.setText(f"{hit.name} — {hit.region()} ({hit.end - hit.start + 1:,} bp) [{hit.track}]"
+                            + (f"\n{hit.description}" if hit.description else ""))
+        self.status.setText("")
+
+    def _ucsc_job(self):
+        client = self._ucsc_client
+        gid = self._genome_value()
+        if not gid:
+            raise RemoteError("Enter a UCSC assembly id (e.g. hg38).")
+        self.settings.setValue("remote/ucsc_genome", gid)
+        species = self._genome_species(gid)
+        out_dir = self._out_dir()
+        by_gene = self.u_r_gene.isChecked()
+        q = self.u_gene.text().strip() if by_gene else self.u_region.text().strip()
+        if not q:
+            raise RemoteError("Enter a gene / accession or a region first.")
+        track = self.u_track.currentData(); annotate = self.u_annot.isChecked()
+        f5, f3 = self.u_f5.value(), self.u_f3.value()
+        orient, keep_mask = self.u_orient.isChecked(), self.u_mask.isChecked()
+
+        def finish(rec, label):
+            path = E.save_record(rec, out_dir)
+            used = rec.annotations.get("ucsc_track", "")
+            return path, (f"UCSC {gid}: {label} ({len(rec.seq):,} bp, {len(rec.features) - 1} features"
+                          f"{', gene models: ' + used if used else ''}) → {path}")
+
+        if not by_gene:
+            chrom, s, e, strand = E.parse_region(q)
+
+            def job():
+                rec = client.fetch_genomic(gid, chrom, s, e, strand, annotate=annotate, track=track,
+                                           keep_mask=keep_mask, species=species)
+                return finish(rec, f"{chrom}:{s}-{e}{'(-)' if strand < 0 else '(+)'}")
+            return job, f"Fetching {chrom}:{s}-{e} from UCSC {gid}…"
+
+        def job():
+            hit = client.search(gid, q)
+            # the search gives a span, not a strand: take it from the gene models when orienting
+            strand = 1
+            if orient:
+                used, rows = client.gene_models(gid, hit.chrom, hit.start - 1, hit.end, track)
+                strand = U.strand_of_hit(hit, rows)
+            s, e = hit.start, hit.end
+            if strand >= 0:
+                s, e = s - f5, e + f3
+            else:
+                s, e = s - f3, e + f5
+            s = max(1, s)
+            rec = client.fetch_genomic(gid, hit.chrom, s, e, strand, annotate=annotate, track=track,
+                                       keep_mask=keep_mask, species=species, hit=hit)
+            return finish(rec, f"{hit.name} {hit.chrom}:{s}-{e}{'(-)' if strand < 0 else '(+)'}")
+        return job, f"Fetching {q} from UCSC {gid}…"
+
     # ------------------------------------------------------------ shared
     def _out_dir(self) -> str:
         d = self.dir_edit.text().strip() or default_download_dir()
@@ -458,6 +611,7 @@ class ImportDialog(QDialog):
             self._workers.remove(w)
             if not self._workers:
                 self.progress.hide(); self.b_fetch.setEnabled(True); self.b_search.setEnabled(True)
+                self.b_lookup.setEnabled(True); self.b_ulookup.setEnabled(True)
             w.deleteLater()
 
         def ok(res):
@@ -472,11 +626,12 @@ class ImportDialog(QDialog):
         if not quiet:
             self.status.setText(busy_text)
         self.progress.show(); self.b_fetch.setEnabled(False); self.b_search.setEnabled(False)
+        self.b_lookup.setEnabled(False); self.b_ulookup.setEnabled(False)
         w.start()
 
     def fetch(self):
         try:
-            job, busy = self._ncbi_job() if self.tabs.currentIndex() == 0 else self._ensembl_job()
+            job, busy = (self._ncbi_job, self._ensembl_job, self._ucsc_job)[self.tabs.currentIndex()]()
         except RemoteError as e:
             QMessageBox.warning(self, "Import", str(e)); return
         self._run(job, self._fetched, busy)
@@ -493,4 +648,5 @@ class ImportDialog(QDialog):
         self.n_ids.clear(); self.n_from.setValue(0); self.n_to.setValue(0)
         self._check_all(False)
         self.e_gene.clear(); self.e_region.clear(); self.e_info.clear()
+        self.u_gene.clear(); self.u_region.clear(); self.u_info.clear()
         self.close()

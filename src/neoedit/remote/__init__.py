@@ -1,4 +1,4 @@
-"""Network importers (Qt-free): NCBI Entrez E-utilities and the Ensembl REST API.
+"""Network importers (Qt-free): NCBI Entrez E-utilities, the Ensembl REST API and the UCSC Genome Browser API.
 
 Both clients fetch records as text, write them to a local *downloads* folder as
 GenBank/FASTA, and hand the path back to the UI, which opens it through the normal
@@ -6,6 +6,6 @@ file path — so features, the gene view, circular topology and "Open recent" al
 exactly as for a file on disk.
 """
 from .http import RemoteError, http_get
-from . import ncbi, ensembl
+from . import ncbi, ensembl, ucsc
 
-__all__ = ["RemoteError", "http_get", "ncbi", "ensembl"]
+__all__ = ["RemoteError", "http_get", "ncbi", "ensembl", "ucsc"]

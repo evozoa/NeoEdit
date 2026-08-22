@@ -118,8 +118,8 @@ class MainWindow(QMainWindow):
         self.a_new = A("&New alignment", self.new_alignment, "Ctrl+N")
         self.a_open = A("&Open…", self.open_file, "Ctrl+O")
         self.a_import = A("&Import sequences into current…", self.import_file)
-        self.a_import_remote = A("Import from &NCBI / Ensembl…", self.import_remote, "Ctrl+Shift+I",
-                                 tip="Fetch records from NCBI Entrez or Ensembl (pinned to release 116) by accession, gene, region or search")
+        self.a_import_remote = A("Import from &NCBI / Ensembl / UCSC…", self.import_remote, "Ctrl+Shift+I",
+                                 tip="Fetch records from NCBI Entrez, Ensembl (pinned to release 116) or the UCSC Genome Browser by accession, gene, region or search")
         self.a_save = A("&Save", self.save_file, "Ctrl+S")
         self.a_saveas = A("Save &As…", self.save_file_as, "Ctrl+Shift+S")
         self.a_export_sel = A("Export selected sequences…", self.export_selected)
@@ -1766,7 +1766,7 @@ Selection
   Click the ruler           select a column;     Esc clears the selection
 
 Other
-  Ctrl+Shift+I import from NCBI / Ensembl, Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next,
+  Ctrl+Shift+I import from NCBI / Ensembl / UCSC, Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next,
   Ctrl+Shift+R reverse complement (as in BioEdit; Ctrl+R also works),
   Ctrl+T translation overlay, Ctrl+Shift+T translate, Ctrl+Shift+O ORF finder, Ctrl+Shift+P primer design,
   Ctrl+Shift+X restriction sites, Ctrl+M align with MAFFT

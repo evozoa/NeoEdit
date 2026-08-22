@@ -61,7 +61,7 @@ actually use, on a codebase that can keep evolving:
 * **Primer design across an alignment** – conserved (universal) or discriminating
   (eDNA) primers using sequence groups, conservation masking, 3'-weighted mismatch
   scoring, IUPAC-degenerate options and an in-silico PCR table.
-* **Import from NCBI and Ensembl** (`Ctrl+Shift+I`) – add GenBank/FASTA records from
+* **Import from NCBI, Ensembl and UCSC** (`Ctrl+Shift+I`) – add GenBank/FASTA records from
   NCBI Entrez by accession/GI (with sub-range and strand) or by searching Entrez and
   ticking hits; fetch genes (symbol or stable ID), regions, cDNA/CDS/protein from the
   Ensembl REST API **pinned to release 116** (archive server first, live server as
@@ -70,6 +70,9 @@ actually use, on a codebase that can keep evolving:
   gene view and the amino-acid line work on them; minus-strand genes can be oriented to
   their own strand. An imported record that carries annotations is pinned as the reference
   so its chromosome map is on screen straight away; unannotated records are simply added.
+  The **UCSC Genome Browser** tab fetches any UCSC assembly (hg38, mm39, danRer11, …) by
+  gene symbol / accession (UCSC search) or region, with gene models from RefSeq / Ensembl /
+  GENCODE / Augustus tracks converted the same way (UCSC exon frames → `/codon_start`).
   Downloads are kept as files (default `~/Downloads/NeoEdit`) and appear
   in *Open recent*.
 * **Restriction sites** – REBASE enzymes (Biopython) with supplier/site-length/ends
