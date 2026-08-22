@@ -565,20 +565,15 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open failed", f"{path}\n\n{e}\n\n{traceback.format_exc()[-800:]}")
             return
         self._set_model(model)
+        self._reset_reference_mode()
         self.settings.setValue("last_dir", os.path.dirname(path))
         self._add_recent(path)
         msg = f"Opened {path} ({model.nrows} sequences, format {model.format})"
         # An annotated GenBank/EMBL record is a reference: populate the genome view from
         # its own features so gene models (and any ORF tracks) have somewhere to live.
-        if model.format in ("genbank", "embl") and model.nrows == 1:
-            try:
-                ann = GA.load_annotation(path)
-            except Exception:
-                ann = None
-            if ann is not None and ann.count():
-                model.features = []
-                self._enter_reference_mode(ann)
-                msg += f" — genome view: {ann.count()} annotated features"
+        if model.format in ("genbank", "embl"):
+            if self._adopt_annotated_records(path, range(model.nrows)):
+                msg += f" — genome view: {self.annotation.count()} annotated features"
         self.statusBar().showMessage(msg, 6000)
 
     def import_file(self):
@@ -603,7 +598,14 @@ class MainWindow(QMainWindow):
             self.model.features.append(f)
         if m.features:
             self.model._emit("features")
-        self.statusBar().showMessage(f"Imported {m.nrows} sequence(s) from {path}", 5000)
+        msg = f"Imported {m.nrows} sequence(s) from {path}"
+        # An annotated record arrives with a chromosome map. The map and the gene models follow
+        # the reference row, so the record is pinned as the reference to put its features on screen.
+        if m.format in ("genbank", "embl"):
+            if self._adopt_annotated_records(path, range(offset, offset + m.nrows)):
+                msg += (f" — pinned {self.model.rows[self.model.ref_row].name} as the reference; "
+                        f"genome view: {self.annotation.count()} annotated features")
+        self.statusBar().showMessage(msg, 5000)
         return m.nrows
 
     def import_remote(self):
@@ -1014,10 +1016,15 @@ class MainWindow(QMainWindow):
         row = self.view.cur_row
         self.model.set_reference(row)
         self._proj = None; self._proj_row = -1; self._ref_ungapped = None
-        if self.genome_panel.isVisible() or self.genome_contig:
+        name = self.model.rows[row].name
+        msg = f"Pinned {name} as the reference sequence"
+        # Features belong to the reference: re-point the map and the gene models at this row.
+        if self._annotated(name) or self.genome_panel.isVisible() or self.genome_contig:
             self._enter_reference_mode(self.annotation)
+            n = len(self.annotation.genes_by_seq.get(name, [])) if self.annotation else 0
+            msg += f" — {n} annotated features" if n else " — no annotation for this sequence"
         self.view.viewport().update()
-        self.statusBar().showMessage(f"Pinned {self.model.rows[row].name} as the reference sequence", 5000)
+        self.statusBar().showMessage(msg, 5000)
 
     def _toggle_circular(self, on):
         self.model.circular = on
@@ -1380,6 +1387,63 @@ class MainWindow(QMainWindow):
         self.a_g_panel.setChecked(True); self._toggle_genome_panel(True)
         self.genome_panel.set_window(0, min(L, max(2000, L)))
         self._grid_scrolled()
+
+    # -------------------------------------------------- annotated references
+    def _annotated(self, name: str) -> bool:
+        """Does the window's annotation carry genes for this sequence?"""
+        return bool(self.annotation and self.annotation.genes_by_seq.get(name))
+
+    def _reset_reference_mode(self):
+        """Forget the annotation belonging to a model that is being replaced."""
+        if self.genome:
+            return                      # genome mode owns its own annotation
+        self.annotation = None
+        self.genome_contig = None
+        self.view.feature_provider = None
+        self.a_g_panel.setChecked(False)
+        self.genome_panel.hide()
+
+    def _merge_annotation(self, ann: GA.Annotation) -> GA.Annotation:
+        """Fold `ann` into the window's annotation. An Annotation is keyed by seqid, so several
+        annotated records coexist happily and the reference row's name selects which is shown."""
+        cur = self.annotation
+        if cur is None:
+            ann.finalize()
+            return ann
+        for genes in ann.genes_by_seq.values():
+            for g in genes:
+                cur.add_gene(g)
+        cur.finalize()
+        return cur
+
+    def _adopt_annotated_records(self, path: str, rows) -> int:
+        """Pin an annotated record from `path` as the reference and show its chromosome map.
+
+        Annotations are a property of the reference sequence: the map and the gene models follow
+        whichever row is pinned, so a record has to become the reference for its features to be on
+        screen. Returns how many annotated records were found among `rows`.
+        """
+        try:
+            ann = GA.load_annotation(path)
+        except Exception:
+            return 0
+        if ann is None or not ann.count():
+            return 0
+        seqids = set(ann.seqids())
+        adopted = [r for r in rows if 0 <= r < self.model.nrows and self.model.rows[r].name in seqids]
+        if not adopted:
+            return 0
+        # the annotation drives the display from here; drop the duplicate per-row copies
+        drop = set(adopted)
+        kept = [f for f in self.model.features if f.row not in drop]
+        if len(kept) != len(self.model.features):
+            self.model.features = kept
+            self.model._emit("features")
+        self.annotation = self._merge_annotation(ann)
+        self.model.set_reference(adopted[0])
+        self._proj = None; self._proj_row = -1; self._ref_ungapped = None
+        self._enter_reference_mode(self.annotation)
+        return len(adopted)
 
     def genome_open_reference(self):
         if not self._maybe_save():

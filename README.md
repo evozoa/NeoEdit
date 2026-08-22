@@ -42,7 +42,9 @@ actually use, on a codebase that can keep evolving:
   chromosome map, gene models and coordinates, so all three tiers always agree; the
   pin is stored in `.bio` files as BioEdit's numbering-mask slot. Insertions the other
   sequences carry but the reference lacks appear as clickable carets that jump the
-  grid to the inserted bases.
+  grid to the inserted bases. **Annotations belong to the reference**: an alignment can
+  hold several annotated records at once, and the map and gene models show the pinned
+  one. To read another record's features, pin that sequence instead.
 * **Genome context** – three synced tiers: contig/chromosome overview, gene-model
   and synteny region view (GFF3/GTF/BED/GenBank + PAF), and the alignment grid;
   indexed FASTA so whole chromosomes open instantly. GenBank references (mitogenome/
@@ -66,7 +68,9 @@ actually use, on a codebase that can keep evolving:
   fallback, with the actual release shown). Ensembl genomic imports are written as GenBank
   with gene / mRNA / tRNA / rRNA / CDS features built from Ensembl's gene models, so the
   gene view and the amino-acid line work on them; minus-strand genes can be oriented to
-  their own strand. Downloads are kept as files (default `~/Downloads/NeoEdit`) and appear
+  their own strand. An imported record that carries annotations is pinned as the reference
+  so its chromosome map is on screen straight away; unannotated records are simply added.
+  Downloads are kept as files (default `~/Downloads/NeoEdit`) and appear
   in *Open recent*.
 * **Restriction sites** – REBASE enzymes (Biopython) with supplier/site-length/ends
   filters; map one sequence, or compare across an alignment to find enzymes that

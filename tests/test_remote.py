@@ -249,8 +249,14 @@ def test_import_dialog_wiring(tmp_path):
     gbp = os.path.join(HERE, "..", "examples", "mito", "NC_012920_MDP.gb")
     if os.path.exists(gbp):
         dlg.show()
-        dlg._fetched((gbp, "done"))                   # GenBank features come along, re-homed to row 10
-        assert w.model.nrows == 11 and w.model.features and all(f.row == 10 for f in w.model.features)
+        dlg._fetched((gbp, "done"))
+        # An annotated record is pinned as the reference and its features drive the genome
+        # view, so they live in the annotation rather than as per-row copies on row 10.
+        assert w.model.nrows == 11
+        assert w.model.ref_row == 10
+        assert w.genome_panel.isVisible() and w.genome_contig == w.model.rows[10].name
+        assert w.annotation and w.annotation.genes_by_seq.get(w.genome_contig)
+        assert [f for f in w.model.features if f.row == 10] == []
     w.model.dirty = False
     dlg.close()
     w.close()
