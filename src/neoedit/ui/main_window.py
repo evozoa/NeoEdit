@@ -181,6 +181,10 @@ class MainWindow(QMainWindow):
         self.a_row_less = A("Decrease line spacing", lambda: self.view.set_spacing(row_pad=self.view.row_pad - 1), "Ctrl+Shift+Down")
         self.a_col_more = A("Increase &character spacing", lambda: self.view.set_spacing(col_pad=self.view.col_pad + 1), "Ctrl+Shift+Right")
         self.a_col_less = A("Decrease character spacing", lambda: self.view.set_spacing(col_pad=self.view.col_pad - 1), "Ctrl+Shift+Left")
+        self.a_fit_names = A("Fit name column to &longest name", lambda: self.view.fit_name_width_exact(),
+                             tip="Widen the name column so every title is fully visible (drag the divider or double-click it, too)")
+        self.a_fit_names_auto = A("Name column: &automatic width", lambda: self.view.fit_name_width(),
+                                  tip="Back to the automatic width (longest name, capped)")
         self.a_pinned_ref = A("Show pinned &reference row", self._toggle_pinned_ref, None, True,
                               tip="Keep the reference sequence (the row the chromosome map and gene models follow) visible above the grid")
         self.a_pinned_ref.setChecked(True)
@@ -313,7 +317,7 @@ class MainWindow(QMainWindow):
             e.addAction(a) if a else e.addSeparator()
 
         v = mb.addMenu("&View")
-        for a in (self.a_zoom_in, self.a_zoom_out, self.a_font, self.a_crisp, None, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None, self.a_pinned_ref, self.a_translation, self.a_features, self.a_shade_feat, self.a_dock, None):
+        for a in (self.a_zoom_in, self.a_zoom_out, self.a_font, self.a_crisp, None, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None, self.a_fit_names, self.a_fit_names_auto, None, self.a_pinned_ref, self.a_translation, self.a_features, self.a_shade_feat, self.a_dock, None):
             v.addAction(a) if a else v.addSeparator()
         wm = v.addMenu("Text &weight")
         for a in (self.a_w_reg, self.a_w_semi, self.a_w_bold):
@@ -710,6 +714,12 @@ class MainWindow(QMainWindow):
         fs = self.settings.value("font_size")
         if fs:
             self.view.font_size = int(fs); self.view._apply_font()
+        nw = self.settings.value("name_w")
+        if nw:
+            try:
+                self.view.set_name_width(int(nw))
+            except (TypeError, ValueError):
+                pass
         fam = self.settings.value("font_family")
         if fam:
             self.view.set_font_family(fam)
@@ -762,6 +772,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("font_size", self.view.font_size)
         self.settings.setValue("font_family", self.view.font_family)
+        self.settings.setValue("name_w", self.view.name_w_user or "")
         self.settings.setValue("scheme", self.view.scheme_name)
         self.settings.setValue("text_weight", self.view.text_weight)
         self.settings.setValue("crisp_text", self.view.crisp_text)

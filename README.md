@@ -81,6 +81,8 @@ actually use, on a codebase that can keep evolving:
 * **Sequence titles as the source shows them** – rows are named by the full definition line
   (`NC_012920.1 Homo sapiens mitochondrion, complete genome`), as BioEdit does; the accession
   remains the key for annotations and genome data, and FASTA export reproduces the header.
+  The name column is resizable: drag the divider between names and grid, double-click it to
+  fit the longest title, or use View ▸ Fit name column / automatic width; the width is remembered.
 * **Import from NCBI, Ensembl and UCSC** (`Ctrl+Shift+I`) – add GenBank/FASTA records from
   NCBI Entrez by accession/GI (with sub-range and strand) or by searching Entrez and
   ticking hits; fetch genes (symbol or stable ID), regions, cDNA/CDS/protein from the

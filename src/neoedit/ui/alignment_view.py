@@ -30,6 +30,7 @@ class _ColMap:
 class AlignmentView(QAbstractScrollArea):
     cursorChanged = Signal(int, int)          # row, col
     selectionChanged = Signal()
+    nameWidthChanged = Signal(int)
     modeChanged = Signal(str)
     featureActivated = Signal(object)         # Feature
     contextMenuWanted = Signal(QPoint)        # viewport position
@@ -65,6 +66,9 @@ class AlignmentView(QAbstractScrollArea):
         self._apply_font()
 
         self.name_w = 140
+        self.name_w_user: int | None = None   # set by dragging the divider; None = fit the longest name
+        self._name_drag = False
+        self._divider_hover = False
         self.ruler_h = 22
         self.cur_row = 0
         self.cur_col = 0
@@ -210,8 +214,39 @@ class AlignmentView(QAbstractScrollArea):
         self.viewport().update()
 
     def _update_name_width(self):
+        if self.name_w_user is not None:
+            self.name_w = self.name_w_user
+            return
         w = max((self._fm.horizontalAdvance(r.name) for r in self.model.rows), default=60)
         self.name_w = max(90, min(340, w + 16))
+
+    # ------------------------------------------------------------ name column width
+    DIVIDER_GRAB = 5        # px either side of the name/grid boundary that grabs the divider
+
+    def on_divider(self, pos) -> bool:
+        return abs(pos.x() - self.name_w) <= self.DIVIDER_GRAB
+
+    def set_name_width(self, w: int):
+        """Manual width of the name column (drag the divider); clamped so the grid stays visible."""
+        w = int(max(40, min(self.viewport().width() - 120, w)))
+        self.name_w_user = w
+        self.name_w = w
+        self._update_scrollbars()
+        self.viewport().update()
+        self.nameWidthChanged.emit(w)
+
+    def fit_name_width(self):
+        """Back to automatic: wide enough for the longest name (up to a limit)."""
+        self.name_w_user = None
+        self._update_name_width()
+        self._update_scrollbars()
+        self.viewport().update()
+        self.nameWidthChanged.emit(self.name_w)
+
+    def fit_name_width_exact(self):
+        """Wide enough to show every name in full, however long."""
+        w = max((self._fm.horizontalAdvance(r.name) for r in self.model.rows), default=60)
+        self.set_name_width(w + 20)
 
     @property
     def row_h(self) -> int:
@@ -646,6 +681,10 @@ class AlignmentView(QAbstractScrollArea):
         if e.button() == Qt.RightButton:
             self._right_click(pos, e.modifiers())
             return
+        if e.button() == Qt.LeftButton and self.on_divider(pos):
+            self._name_drag = True
+            self.viewport().setCursor(Qt.SplitHCursor)
+            return
         row, col = self.cell_at(pos)
         self._press_pos = pos
         if row < 0 and pos.y() >= self.ruler_h and self.pinned_row() >= 0:
@@ -736,6 +775,16 @@ class AlignmentView(QAbstractScrollArea):
 
     def mouseMoveEvent(self, e: QMouseEvent):
         pos = e.position().toPoint()
+        if self._name_drag and e.buttons() & Qt.LeftButton:
+            self.set_name_width(pos.x())
+            return
+        on_div = self.on_divider(pos) and self._drag_block is None and not self._dragging_sel
+        if on_div != self._divider_hover:
+            self._divider_hover = on_div
+            self.viewport().setCursor(Qt.SplitHCursor if on_div else Qt.IBeamCursor)
+        if on_div:
+            self.setToolTip("Drag to resize the name column; double-click to fit the longest name")
+            return
         row, col = self.cell_at(pos)
         if self._drag_block is not None and e.buttons() & Qt.LeftButton:
             rows, start, end, last, kind = self._drag_block
@@ -788,6 +837,13 @@ class AlignmentView(QAbstractScrollArea):
         self.setToolTip("")
 
     def mouseReleaseEvent(self, e: QMouseEvent):
+        if self._name_drag:
+            self._name_drag = False
+            self._press_pos = None
+            if not self.on_divider(e.position().toPoint()):
+                self._divider_hover = False
+                self.viewport().setCursor(Qt.IBeamCursor)
+            return
         if self._drag_block is not None:
             self._drag_block = None
             self.model.end_batch()
@@ -805,6 +861,9 @@ class AlignmentView(QAbstractScrollArea):
 
     def mouseDoubleClickEvent(self, e: QMouseEvent):
         pos = e.position().toPoint()
+        if self.on_divider(pos):
+            self.fit_name_width_exact()
+            return
         row, col = self.cell_at(pos)
         if pos.x() < self.name_w and 0 <= row < self.model.nrows:
             name, ok = QInputDialog.getText(self, "Rename sequence", "Name:", text=self.model.rows[row].name)

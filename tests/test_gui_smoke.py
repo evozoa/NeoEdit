@@ -226,3 +226,25 @@ def test_pinned_reference_strip_and_consensus_tool(app):
     d.name.setText("cons"); d.add_row()
     assert m.nrows == 5 and m.rows[-1].name == "cons" and m.rows[-1].seq == "ACGWTR"
     w.model.dirty = False; w.close()
+
+
+def test_name_column_divider(app):
+    """The name column is resizable: drag the divider, double-click to fit, menu to reset."""
+    from neoedit.ui.main_window import MainWindow
+    w = MainWindow(); w.show(); w.open_path(EXAMPLE)
+    v = w.view; v.resize(900, 400); v.viewport().repaint()
+    w0 = v.name_w
+    assert v.on_divider(QPoint(w0, 50)) and not v.on_divider(QPoint(w0 + 40, 50))
+    # drag the divider 60 px to the right
+    QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, QPoint(w0, 60))
+    QTest.mouseMove(v.viewport(), QPoint(w0 + 30, 60)); QTest.mouseMove(v.viewport(), QPoint(w0 + 60, 60))
+    QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, QPoint(w0 + 60, 60))
+    assert v.name_w == w0 + 60 and v.name_w_user == w0 + 60
+    assert not v.sel_rows                                # the drag did not select a row
+    # dragging cannot hide the grid
+    v.set_name_width(5000); assert v.name_w <= v.viewport().width() - 120
+    # reset / fit via the View actions
+    w.a_fit_names_auto.trigger(); assert v.name_w_user is None and v.name_w == w0
+    w.model.rename(0, "A" * 80); w.a_fit_names.trigger()
+    assert v.name_w > 340 and v.name_w >= v._fm.horizontalAdvance("A" * 80)
+    w.model.dirty = False; w.close()
