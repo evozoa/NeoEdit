@@ -185,8 +185,9 @@ class MainWindow(QMainWindow):
                              tip="Widen the name column so every title is fully visible (drag the divider or double-click it, too)")
         self.a_fit_names_auto = A("Name column: &automatic width", lambda: self.view.fit_name_width(),
                                   tip="Back to the automatic width (longest name, capped)")
-        self.a_pinned_ref = A("Show pinned &reference row", self._toggle_pinned_ref, None, True,
-                              tip="Keep the reference sequence (the row the chromosome map and gene models follow) visible above the grid")
+        self.a_pinned_ref = A("Show pinned &reference row when scrolled off-screen", self._toggle_pinned_ref, None, True,
+                              tip="While the reference sequence (the row the chromosome map and gene models follow) is scrolled "
+                                  "out of view, keep a tinted copy of it above the grid")
         self.a_pinned_ref.setChecked(True)
         self.a_translation = A("Show &translation under DNA", self._toggle_translation, "Ctrl+T", True)
         self.a_features = A("Show &features", self._toggle_features, None, True); self.a_features.setChecked(True)

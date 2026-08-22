@@ -257,13 +257,18 @@ class AlignmentView(QAbstractScrollArea):
         return self.ruler_h + (self.cell_h if self.pinned_row() >= 0 else 0)
 
     def pinned_row(self) -> int:
-        """Index of the reference row shown in the header strip, or -1 when the strip is hidden
-        (toggled off, or fewer than two sequences — a lone row needs no copy of itself)."""
+        """Index of the reference row shown in the sticky header strip, or -1 when the strip is
+        hidden: toggled off, fewer than two sequences, or the reference row itself is on screen
+        (the strip only stands in for it while it is scrolled out of view)."""
         m = self.model
         if not self.show_reference or m.nrows < 2:
             return -1
-        r = m.ref_row
-        return r if 0 <= r < m.nrows else 0
+        r = m.ref_row if 0 <= m.ref_row < m.nrows else 0
+        vs = self.verticalScrollBar().value()
+        nvis = max(1, (self.viewport().height() - self.ruler_h) // self.row_h)
+        if vs <= r < vs + nvis:
+            return -1
+        return r
 
     def _update_scrollbars(self):
         vp = self.viewport()
@@ -490,10 +495,16 @@ class AlignmentView(QAbstractScrollArea):
         if pr >= 0:
             y = self.ruler_h
             row = m.rows[pr]
+            # tinted band + "pinned" tag: a sticky copy of the reference row, not another sequence
+            p.fillRect(0, y, W, self.cell_h, QColor("#fff3cd") if not dark else QColor("#4a4020"))
             p.setPen(Qt.NoPen); p.setBrush(QColor("#e00000"))
             p.drawPolygon(QPolygonF([QPointF(5, y + 3), QPointF(5, y + self.cell_h - 3), QPointF(10, y + self.cell_h / 2)]))
+            tag = "pinned"
+            tag_w = self._fm.horizontalAdvance(tag) + 6
             p.setPen(fg)
-            p.drawText(13, y + self._ty, self._fm.elidedText(row.name, Qt.ElideRight, grid_left - 17))
+            p.drawText(13, y + self._ty, self._fm.elidedText(row.name, Qt.ElideRight, grid_left - 17 - tag_w))
+            p.setPen(QColor("#8a6d1d") if not dark else QColor("#e0c060"))
+            p.drawText(grid_left - tag_w, y + self._ty, tag)
             seq = row.seq
             for c in range(c0, c1):
                 ch = seq[c] if c < len(seq) else ""

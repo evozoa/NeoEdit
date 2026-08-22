@@ -18,9 +18,10 @@ actually use, on a codebase that can keep evolving:
   Manuel Ruiz / codon-degeneracy tables and Clustal X / Zappo / Taylor /
   hydrophobicity. BioEdit "normal" view (colored letters) by default; Ctrl+I
   toggles "inverse" view (colored backgrounds). Shade identities (black, as in
-  BioEdit) vs consensus or first sequence, identities-as-dots. The **pinned reference**
-  (the row the chromosome map and gene models follow) stays visible above the grid while
-  you scroll; **Alignment → Consensus sequence…** builds a majority/plurality or
+  BioEdit) vs consensus or first sequence, identities-as-dots. While the **pinned reference**
+  (the row the chromosome map and gene models follow) is scrolled out of view, a tinted,
+  "pinned"-tagged copy of it sticks above the grid (View ▸ Show pinned reference row);
+  **Alignment → Consensus sequence…** builds a majority/plurality or
   IUPAC-degenerate consensus of all or selected rows and adds it as a row, copies or saves it.
 * **Sequence tools** – reverse-complement, complement, reverse, case, DNA↔RNA,
   translation (any NCBI genetic code, any frame, keep-aligned or six-frame report).

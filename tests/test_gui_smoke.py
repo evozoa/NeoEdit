@@ -197,16 +197,21 @@ def test_pinned_reference_strip_and_consensus_tool(app):
     v = w.view
     assert v.pinned_row() == -1 and v.header_h == v.ruler_h          # empty: ruler only
     w.open_path(EXAMPLE)
-    assert v.pinned_row() == 0 and v.header_h == v.ruler_h + v.cell_h
+    # all five rows on screen: the reference is visible, so no sticky copy (it would look like a 6th row)
+    v.resize(900, 400); v.viewport().repaint()
+    assert v.pinned_row() == -1 and v.header_h == v.ruler_h
+    # shrink the viewport so only ~2 rows fit and scroll the reference off-screen -> the strip appears
+    v.resize(900, v.ruler_h + 2 * v.row_h + 30); v.viewport().repaint()
     w.model.ref_row = 2
-    assert v.pinned_row() == 2
+    v.verticalScrollBar().setValue(3)
+    assert v.pinned_row() == 2 and v.header_h == v.ruler_h + v.cell_h
     w.a_pinned_ref.setChecked(False); w._toggle_pinned_ref(False)
     assert v.pinned_row() == -1
     w._toggle_pinned_ref(True)
-    # clicking the strip's name jumps to the reference row
-    v.resize(900, 400); v.viewport().repaint()
+    # clicking the strip's name jumps to the reference row (which scrolls back into view, hiding the strip)
+    v.viewport().repaint()
     QTest.mouseClick(v.viewport(), Qt.LeftButton, Qt.NoModifier, QPoint(20, v.ruler_h + 4))
-    assert v.sel_rows == {2}
+    assert v.sel_rows == {2} and v.verticalScrollBar().value() <= 2 and v.pinned_row() == -1
     # a lone sequence needs no pinned copy of itself
     w._set_model(AlignmentModel([SequenceRow("a", "ACGT")]))
     assert v.pinned_row() == -1
@@ -233,6 +238,7 @@ def test_name_column_divider(app):
     from neoedit.ui.main_window import MainWindow
     w = MainWindow(); w.show(); w.open_path(EXAMPLE)
     v = w.view; v.resize(900, 400); v.viewport().repaint()
+    v.fit_name_width()                                   # start from the automatic width whatever was saved
     w0 = v.name_w
     assert v.on_divider(QPoint(w0, 50)) and not v.on_divider(QPoint(w0 + 40, 50))
     # drag the divider 60 px to the right
@@ -244,7 +250,7 @@ def test_name_column_divider(app):
     # dragging cannot hide the grid
     v.set_name_width(5000); assert v.name_w <= v.viewport().width() - 120
     # reset / fit via the View actions
-    w.a_fit_names_auto.trigger(); assert v.name_w_user is None and v.name_w == w0
+    w.a_fit_names_auto.trigger(); assert v.name_w_user is None and v.name_w == w0 <= 340
     w.model.rename(0, "A" * 80); w.a_fit_names.trigger()
     assert v.name_w > 340 and v.name_w >= v._fm.horizontalAdvance("A" * 80)
     w.model.dirty = False; w.close()
