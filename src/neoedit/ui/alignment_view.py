@@ -94,6 +94,7 @@ class AlignmentView(QAbstractScrollArea):
         self.trans_fill = "regions"     # "regions" = only inside features, "all" = whole row in the chosen frame
         self.translation_provider = None  # callable(row, c0, c1) -> [(start, end, strand, table, name)]
         self.show_features = True
+        self.show_gene_models = False   # gene-model bars under the reference row (off: the region view shows them)
         self.shade_features = False     # tint residues under a feature (off: only a marker bar)
         self.feature_alpha = 45
         self.shade_threshold = 0.5
@@ -555,7 +556,7 @@ class AlignmentView(QAbstractScrollArea):
                 self._draw_translation(p, r, seq, y, c0, c1, hs, grid_left, fg, dark)
         # --- features overlay
         feats = list(m.features) if m.features else []
-        if self.show_features and self.feature_provider is not None:
+        if self.show_features and self.show_gene_models and self.feature_provider is not None:
             for r in range(r0, r1):
                 try:
                     feats.extend(self.feature_provider(r, c0, c1))
@@ -890,7 +891,7 @@ class AlignmentView(QAbstractScrollArea):
 
     def _features_at(self, row, col):
         out = [f for f in self.model.features if f.row == row and f.start <= col < f.end]
-        if self.feature_provider is not None:
+        if self.feature_provider is not None and self.show_gene_models:
             try:
                 out += [f for f in self.feature_provider(row, col, col + 1) if f.start <= col < f.end]
             except Exception:

@@ -191,6 +191,9 @@ class MainWindow(QMainWindow):
         self.a_pinned_ref.setChecked(True)
         self.a_translation = A("Show &translation under DNA", self._toggle_translation, "Ctrl+T", True)
         self.a_features = A("Show &features", self._toggle_features, None, True); self.a_features.setChecked(True)
+        self.a_gene_models = A("Show &gene models in grid", self._toggle_gene_models, None, True,
+                               tip="Also draw the reference's annotated gene models (CDS/UTR/RNA) as bars under its residues; "
+                                   "off by default because the region view above already shows them")
         self.a_shade_feat = A("Shade feature &regions", self._toggle_shade_features, None, True,
                               "Tint residues covered by a feature; off by default so gene models "
                               "do not wash out the sequence")
@@ -318,7 +321,7 @@ class MainWindow(QMainWindow):
             e.addAction(a) if a else e.addSeparator()
 
         v = mb.addMenu("&View")
-        for a in (self.a_zoom_in, self.a_zoom_out, self.a_font, self.a_crisp, None, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None, self.a_fit_names, self.a_fit_names_auto, None, self.a_pinned_ref, self.a_translation, self.a_features, self.a_shade_feat, self.a_dock, None):
+        for a in (self.a_zoom_in, self.a_zoom_out, self.a_font, self.a_crisp, None, self.a_row_more, self.a_row_less, self.a_col_more, self.a_col_less, None, self.a_fit_names, self.a_fit_names_auto, None, self.a_pinned_ref, self.a_translation, self.a_features, self.a_gene_models, self.a_shade_feat, self.a_dock, None):
             v.addAction(a) if a else v.addSeparator()
         wm = v.addMenu("Text &weight")
         for a in (self.a_w_reg, self.a_w_semi, self.a_w_bold):
@@ -760,6 +763,9 @@ class MainWindow(QMainWindow):
         sh = self.settings.value("shade_features", False)
         sh = sh in (True, "true", "True", 1, "1")
         self.a_shade_feat.setChecked(sh); self.view.shade_features = sh
+        gm = self.settings.value("grid_gene_models", False)
+        gm = gm in (True, "true", "True", 1, "1")
+        self.a_gene_models.setChecked(gm); self.view.show_gene_models = gm
         inv = self.settings.value("inverse_view", False)
         inv = inv in (True, "true", "True", 1, "1")
         self._set_inverse(inv)
@@ -901,6 +907,9 @@ class MainWindow(QMainWindow):
 
     def _toggle_features(self, on):
         self.view.show_features = on; self.view.viewport().update()
+
+    def _toggle_gene_models(self, on):
+        self.view.show_gene_models = bool(on); self.settings.setValue("grid_gene_models", bool(on)); self.view.viewport().update()
 
     def _set_inverse(self, on: bool):
         (self.a_inverse if on else self.a_normal).setChecked(True)

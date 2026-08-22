@@ -21,6 +21,8 @@ actually use, on a codebase that can keep evolving:
   BioEdit) vs consensus or first sequence, identities-as-dots. While the **pinned reference**
   (the row the chromosome map and gene models follow) is scrolled out of view, a tinted,
   "pinned"-tagged copy of it sticks above the grid (View ▸ Show pinned reference row);
+  feature bars under residues mark your own features (ORFs, primers, sites) — the reference's
+  gene models stay in the region view unless View ▸ Show gene models in grid is on;
   **Alignment → Consensus sequence…** builds a majority/plurality or
   IUPAC-degenerate consensus of all or selected rows and adds it as a row, copies or saves it.
 * **Sequence tools** – reverse-complement, complement, reverse, case, DNA↔RNA,

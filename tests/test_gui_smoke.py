@@ -254,3 +254,21 @@ def test_name_column_divider(app):
     w.model.rename(0, "A" * 80); w.a_fit_names.trigger()
     assert v.name_w > 340 and v.name_w >= v._fm.horizontalAdvance("A" * 80)
     w.model.dirty = False; w.close()
+
+
+def test_gene_model_bars_off_by_default(app):
+    """The reference's gene models are not drawn as bars under its residues unless asked."""
+    import os
+    from neoedit.ui.main_window import MainWindow
+    gb = os.path.join(HERE, "..", "examples", "mito", "NC_012920_MDP.gb")
+    if not os.path.exists(gb):
+        pytest.skip("rCRS example missing")
+    w = MainWindow(); w.show(); w.open_path(gb)
+    v = w.view
+    assert w.annotation and v.feature_provider is not None
+    assert not v.show_gene_models and not w.a_gene_models.isChecked()
+    assert v._features_at(0, 6000) == []                        # inside COX1, but no bar/tooltip
+    w.a_gene_models.setChecked(True); w._toggle_gene_models(True)
+    assert any(f.type == "CDS" for f in v._features_at(0, 6000))
+    w._toggle_gene_models(False)
+    w.model.dirty = False; w.close()
