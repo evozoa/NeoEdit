@@ -1044,7 +1044,7 @@ class MainWindow(QMainWindow):
         name = self.model.rows[row].name
         msg = f"Pinned {name} as the reference sequence"
         # Features belong to the reference: re-point the map and the gene models at this row.
-        if self._annotated(name) or self.genome_panel.isVisible() or self.genome_contig:
+        if self._annotated(self.model.seqid(row)) or self.genome_panel.isVisible() or self.genome_contig:
             self._enter_reference_mode(self.annotation)
             n = len(self.annotation.genes_by_seq.get(name, [])) if self.annotation else 0
             msg += f" — {n} annotated features" if n else " — no annotation for this sequence"
@@ -1062,7 +1062,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Set origin", "Open the contig as a reference (Genome ▸ Open GenBank reference / import) "
                                     "to rotate it; the indexed genome FASTA itself is read-only."); return
         proj = self.proj(); L = proj.ref_len
-        seqid = self.genome_contig or self.model.rows[self.ref_index()].name
+        seqid = self.genome_contig or self.model.seqid(self.ref_index())
         feats = []
         if self.annotation:
             for g in self.annotation.genes_by_seq.get(seqid, []):
@@ -1086,7 +1086,7 @@ class MainWindow(QMainWindow):
             return
         pos %= L
         col = proj.ref_to_col(pos)
-        seqid = self.genome_contig or self.model.rows[self.ref_index()].name
+        seqid = self.genome_contig or self.model.seqid(self.ref_index())
         self.model.rotate(col, flip)
         if self.annotation is not None:
             GA.rotate_annotation(self.annotation, seqid, pos, L, flip)
@@ -1520,7 +1520,7 @@ class MainWindow(QMainWindow):
         """Use row 0 of the current model as the reference for the genome panel."""
         if not self.model.nrows:
             return
-        seqid = self.model.rows[self.ref_index()].name
+        seqid = self.model.seqid(self.ref_index())
         self.genome_contig = seqid
         self.annotation = ann
         L = self.proj().ref_len
@@ -1586,7 +1586,7 @@ class MainWindow(QMainWindow):
         if ann is None or not ann.count():
             return 0
         seqids = set(ann.seqids())
-        adopted = [r for r in rows if 0 <= r < self.model.nrows and self.model.rows[r].name in seqids]
+        adopted = [r for r in rows if 0 <= r < self.model.nrows and self.model.seqid(r) in seqids]
         if not adopted:
             return 0
         # the annotation drives the display from here; drop the duplicate per-row copies
@@ -1732,10 +1732,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Circular map",
                                     "Load an annotation first (Genome ▸ Open GenBank reference…, or Load annotation…).\n"
                                     "The map will still draw the sequence rings without genes.")
-        d = CircularDialog(self, seqid=self.genome_contig or self.model.rows[0].name,
+        d = CircularDialog(self, seqid=self.genome_contig or self.model.seqid(self.ref_index()),
                            length=self.proj().ref_len, ann=ann,
                            fetch_seq=lambda s, e: self.ref_ungapped()[s:e],
-                           title=(self.genome_contig or self.model.rows[0].name))
+                           title=(self.genome_contig or self.model.seqid(self.ref_index())))
         d.positionClicked.connect(lambda p: self._genome_focus(p, p))
         d.geneActivated.connect(self._genome_open_gene)
         if self.genome_panel.isVisible():
@@ -1896,7 +1896,7 @@ class MainWindow(QMainWindow):
     def _genome_open_region(self, s: int, e: int):
         if not self.model.nrows:
             return
-        seqid = self.genome_contig or self.model.rows[self.ref_index()].name
+        seqid = self.genome_contig or self.model.seqid(self.ref_index())
         c0, c1 = self.proj().span_to_cols(s, e)
         seq = self.ref_seq()[c0:c1]
         m = AlignmentModel([SequenceRow(f"{seqid}:{s + 1}-{e}", seq)], "dna")

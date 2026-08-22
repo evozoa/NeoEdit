@@ -211,7 +211,7 @@ class AlignmentView(QAbstractScrollArea):
 
     def _update_name_width(self):
         w = max((self._fm.horizontalAdvance(r.name) for r in self.model.rows), default=60)
-        self.name_w = max(90, min(260, w + 16))
+        self.name_w = max(90, min(340, w + 16))
 
     @property
     def row_h(self) -> int:

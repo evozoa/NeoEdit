@@ -113,7 +113,7 @@ class ORFFinderDialog(QDialog):
         ann = self.annotation
         if ann is None:
             return ""
-        seqid = getattr(self.parent(), "genome_contig", None) or self.model.rows[o.row].name
+        seqid = getattr(self.parent(), "genome_contig", None) or self.model.seqid(o.row)
         try:
             genes = ann.overlapping(seqid, o.start, o.end)
         except Exception:

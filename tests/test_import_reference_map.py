@@ -28,7 +28,7 @@ def win():
 
 
 def _ref_name(w):
-    return w.model.rows[w.model.ref_row].name
+    return w.model.rows[w.model.ref_row].accession      # names carry the full definition line; the accession is the key
 
 
 def _shown(w):
@@ -62,7 +62,7 @@ def test_features_follow_the_reference(win):
     human = _shown(win)
     assert human > 0
 
-    zf = next(i for i, r in enumerate(win.model.rows) if r.name == "NC_002333.2")
+    zf = next(i for i, r in enumerate(win.model.rows) if r.accession == "NC_002333.2")
     win.view.cur_row = zf
     win.pin_reference()
     assert win.genome_contig == "NC_002333.2"

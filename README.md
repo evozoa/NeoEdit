@@ -78,6 +78,9 @@ actually use, on a codebase that can keep evolving:
 * **Primer design across an alignment** – conserved (universal) or discriminating
   (eDNA) primers using sequence groups, conservation masking, 3'-weighted mismatch
   scoring, IUPAC-degenerate options and an in-silico PCR table.
+* **Sequence titles as the source shows them** – rows are named by the full definition line
+  (`NC_012920.1 Homo sapiens mitochondrion, complete genome`), as BioEdit does; the accession
+  remains the key for annotations and genome data, and FASTA export reproduces the header.
 * **Import from NCBI, Ensembl and UCSC** (`Ctrl+Shift+I`) – add GenBank/FASTA records from
   NCBI Entrez by accession/GI (with sub-range and strand) or by searching Entrez and
   ticking hits; fetch genes (symbol or stable ID), regions, cDNA/CDS/protein from the

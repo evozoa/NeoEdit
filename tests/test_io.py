@@ -29,3 +29,26 @@ def test_genbank(tmp_path):
     mio.save(m, str(p), "genbank")
     m2 = mio.load(str(p))
     assert m2.rows[0].seq == "ACGTACGTAA"
+
+
+def test_names_are_full_deflines_and_roundtrip(tmp_path):
+    """Rows are named as the source shows them (id + description); the accession stays the key;
+    writing FASTA reproduces the header without duplicating the description."""
+    import os
+    from neoedit.model import io as mio
+    fa = tmp_path / "a.fasta"
+    fa.write_text(">NC_012920.1 Homo sapiens mitochondrion, complete genome\nACGTACGT\n>seq2\nACGT\n")
+    m = mio.load(str(fa))
+    assert m.rows[0].name == "NC_012920.1 Homo sapiens mitochondrion, complete genome"
+    assert m.rows[0].accession == "NC_012920.1" and m.seqid(0) == "NC_012920.1"
+    assert m.rows[1].name == "seq2" and m.rows[1].accession == "seq2"
+    out = mio.dumps(m, "fasta")
+    assert out.startswith(">NC_012920.1 Homo sapiens mitochondrion, complete genome\n")
+    assert out.count("Homo sapiens") == 1
+    m2 = mio.loads(out, "fasta")
+    assert m2.rows[0].name == m.rows[0].name
+    gb = os.path.join(os.path.dirname(__file__), "..", "examples", "mito", "NC_012920_MDP.gb")
+    if os.path.exists(gb):
+        g = mio.load(gb)
+        assert g.rows[0].name == "NC_012920.1 Homo sapiens mitochondrion, complete genome"
+        assert g.seqid(0) == "NC_012920.1"

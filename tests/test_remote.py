@@ -263,7 +263,7 @@ def test_import_dialog_wiring(tmp_path):
         # view, so they live in the annotation rather than as per-row copies on row 10.
         assert w.model.nrows == 11
         assert w.model.ref_row == 10
-        assert w.genome_panel.isVisible() and w.genome_contig == w.model.rows[10].name
+        assert w.genome_panel.isVisible() and w.genome_contig == w.model.rows[10].accession
         assert w.annotation and w.annotation.genes_by_seq.get(w.genome_contig)
         assert [f for f in w.model.features if f.row == 10] == []
     w.model.dirty = False

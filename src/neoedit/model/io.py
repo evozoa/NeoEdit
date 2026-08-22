@@ -70,13 +70,19 @@ def guess_format(path: str, text_head: str | None = None) -> str:
 
 
 def _rows_from_records(records) -> list[SequenceRow]:
+    """Rows named by the full definition line (id + description), as the source shows them —
+    BioEdit keeps the whole FASTA header / GenBank DEFINITION as the title. The bare id stays in
+    SequenceRow.id (-> .accession) for annotation and genome look-ups."""
     rows = []
     for rec in records:
-        name = rec.id if rec.id and rec.id != "<unknown id>" else (rec.name or "seq")
-        desc = rec.description or ""
-        if desc.startswith(name):
-            desc = desc[len(name):].strip()
-        rows.append(SequenceRow(name=name, seq=str(rec.seq), description=desc, id=rec.id or ""))
+        rid = rec.id if rec.id and rec.id != "<unknown id>" else (rec.name or "seq")
+        desc = (rec.description or "").strip()
+        if desc.startswith(rid):
+            desc = desc[len(rid):].strip()
+        if desc in ("<unknown description>", "."):
+            desc = ""
+        name = f"{rid} {desc}".strip() if desc else rid
+        rows.append(SequenceRow(name=name, seq=str(rec.seq), description=desc, id=rid))
     return rows
 
 
@@ -181,7 +187,13 @@ def to_records(model: AlignmentModel, rows=None) -> list[SeqRecord]:
     recs = []
     for i in idx:
         r = model.rows[i]
-        recs.append(SeqRecord(Seq(r.seq), id=r.name, name=r.name[:16], description=r.description))
+        # ">id description": the first word of the name is the id, the rest its description
+        parts = r.name.split(None, 1)
+        rid = parts[0] if parts else (r.id or "seq")
+        desc = parts[1] if len(parts) > 1 else ""
+        if r.description and r.description not in r.name:
+            desc = (desc + " " + r.description).strip()
+        recs.append(SeqRecord(Seq(r.seq), id=rid, name=rid[:16], description=desc))
     return recs
 
 

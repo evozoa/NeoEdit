@@ -29,6 +29,14 @@ class SequenceRow:
     def __len__(self) -> int:
         return len(self.seq)
 
+    @property
+    def accession(self) -> str:
+        """Stable identifier: the record id (accession) when known, else the first word of the name.
+        The name itself is the full definition line, as the source shows it."""
+        if self.id:
+            return self.id.split()[0]
+        return self.name.split()[0] if self.name.split() else self.name
+
     def ungapped(self) -> str:
         return self.seq.translate(_GAP_TABLE)
 
@@ -479,6 +487,10 @@ class AlignmentModel:
         if 0 <= self.ref_row < self.nrows:
             return self.rows[self.ref_row]
         return None
+
+    def seqid(self, row: int) -> str:
+        """Key under which annotations/genome data refer to this row (accession, not the display name)."""
+        return self.rows[row].accession if 0 <= row < self.nrows else ""
 
     def set_reference(self, row: int):
         if 0 <= row < self.nrows and row != self.ref_row:
