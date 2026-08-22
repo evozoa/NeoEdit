@@ -242,3 +242,71 @@ def test_set_origin_gui():
     assert (nd6.start, nd6.end, nd6.strand) == (0, 525, 1)
     assert str(Seq(w.model.rows[0].seq[:525]).translate(table=2)).startswith("MMYALF")
     w.model.dirty = False; w.close()
+
+
+def test_primer_design_circular():
+    from neoedit.analysis import primers as P, primer_design as PD
+    if not os.path.exists(RCRS):
+        pytest.skip("rCRS example missing")
+    seq = mio.load(RCRS).rows[0].seq; L = len(seq)
+    rot = seq[6500:] + seq[:6500]; dbl = rot + rot
+    # target across the origin: every product must cross it; primers verified on the ring
+    pairs = P.design_primers(rot, target=(L - 100, 200), product_range=((200, 400),), num_return=5, circular=True)
+    assert pairs and all(p.crosses_origin and p.circular_len == L for p in pairs)
+    p = pairs[0]
+    ls, le = p.left.span; rs, re_ = p.right.span
+    assert dbl[ls:le] == p.left.seq and str(Seq(dbl[rs:re_]).reverse_complement()) == p.right.seq
+    assert p.product_size == re_ - ls and p.left.start < L <= p.right.start
+    assert p.right.pieces(L) == [(rs - L, re_ - L)] and "across" not in p.right.pos_text(L)
+    feats = P.pair_to_features(p, 0, None, 1)
+    assert [(f.start, f.end) for f in feats] == [(ls, le), (rs - L, re_ - L)]
+    # the same target on a linear template is refused with a hint, not a Primer3 crash
+    with pytest.raises(ValueError, match="circular"):
+        P.design_primers(rot, target=(L - 100, 200), product_range=((200, 400),), circular=False)
+    # no target: candidates are unique and reported once, on the first turn
+    p2 = P.design_primers(rot, product_range=((100, 300),), num_return=6, circular=True)
+    assert len(p2) == 6 and all(x.left.start < L for x in p2) and len({(x.left.start, x.right.start) for x in p2}) == 6
+    # a primer site straddling the origin: two pieces, positions read 'a-b (across origin)'
+    pr = P.Primer("ACGT" * 5, L - 8, 20, 60.0, 50.0, 0, 0, 0)
+    assert pr.pieces(L) == [(L - 8, L), (0, 12)] and pr.pos_text(L) == f"{L - 7}-12 (across origin)"
+    # scoring a site given as pieces reads the ring in order (forward and reverse)
+    site = rot[L - 8:] + rot[:12]
+    hit = PD.score_primer(site, [rot], ["a"], L - 8, L, 1, pieces=[(L - 8, L), (0, 12)])[0]
+    assert hit.mismatches == 0 and hit.covered
+    rhit = PD.score_primer(str(Seq(site).reverse_complement()), [rot], ["a"], L - 8, L, -1, pieces=[(L - 8, L), (0, 12)])[0]
+    assert rhit.mismatches == 0
+    # alignment design across the origin: pieces, in-silico table, features on every row
+    rnd = random.Random(1)
+    def mut(s, n):
+        s = list(s)
+        for _ in range(n):
+            i = rnd.randrange(len(s)); s[i] = rnd.choice("ACGT")
+        return "".join(s)
+    rows = [rot, mut(rot, 30), mut(rot, 30)]
+    res = PD.design_on_alignment(rows, ["a", "b", "c"], template_row=0, include_rows=[0, 1, 2], product_range=((150, 400),),
+                                 num_return=5, circular=True, min_conservation=0.8, primer3_kwargs=dict(target=(L - 100, 200)))
+    evs = list(res)
+    assert evs and all(e.pair.crosses_origin for e in evs)
+    e = evs[0]
+    assert e.left_pieces[0][0] < L and e.right_pieces[0][1] <= L and e.cols_text("right") == f"{e.right_pieces[0][0] + 1:,}-{e.right_pieces[0][1]:,}"
+    tbl = PD.insilico_table(e)
+    assert tbl[0]["fwd_mm"] == 0 and tbl[0]["rev_mm"] == 0 and tbl[0]["amplifies"]
+
+
+def test_primer_dialogs_follow_topology():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    import sys
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(sys.argv)
+    from neoedit.ui.main_window import MainWindow
+    if not os.path.exists(RCRS):
+        pytest.skip("rCRS example missing")
+    w = MainWindow(); w.show(); w.open_path(RCRS); app.processEvents()
+    assert w.model.circular
+    w.primer_design(); d = w._children[-1]; assert d.circ_cb.isChecked(); d.close()
+    w.model.duplicate_rows([0])                       # across-alignment design needs two sequences
+    w.design_primers(); d2 = w._children[-1]; assert d2.circ_cb.isChecked(); d2.close()
+    w.set_topology(False)
+    w.primer_design(); d3 = w._children[-1]; assert not d3.circ_cb.isChecked(); d3.close()
+    w.model.dirty = False; w.close()

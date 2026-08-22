@@ -15,7 +15,7 @@ class PrimerDialog(QDialog):
     pairSelected = Signal(int, int, int)     # row, start, end (gapped coords spanning product)
     featuresReady = Signal(list)
 
-    def __init__(self, model, rows: list[int], sel_cols: tuple[int, int] | None, parent=None):
+    def __init__(self, model, rows: list[int], sel_cols: tuple[int, int] | None, parent=None, circular: bool = False):
         super().__init__(parent)
         self.setWindowTitle("Primer design (Primer3)")
         self.resize(950, 620)
@@ -46,6 +46,10 @@ class PrimerDialog(QDialog):
         self.t_len = QSpinBox(); self.t_len.setRange(1, 10**7); self.t_len.setValue(max(1, tgt_len))
         g.addWidget(self.use_target, 1, 0); g.addWidget(QLabel("start"), 1, 1); g.addWidget(self.t_start, 1, 2)
         g.addWidget(QLabel("length"), 1, 3); g.addWidget(self.t_len, 1, 4)
+        self.circ_cb = QCheckBox("Circular template: primers and products may span the origin")
+        self.circ_cb.setChecked(bool(circular))
+        self.circ_cb.setToolTip("Follows the window's topology; positions past the origin are shown as 'a-b (across origin)'")
+        g.addWidget(self.circ_cb, 1, 5, 1, 2)
 
         def dsb(lo, hi, v, step=0.5):
             w = QDoubleSpinBox(); w.setRange(lo, hi); w.setValue(v); w.setSingleStep(step); return w
@@ -115,7 +119,8 @@ class PrimerDialog(QDialog):
                 opt_tm=self.tm_opt.value(), min_tm=self.tm_min.value(), max_tm=self.tm_max.value(),
                 min_gc=self.gc_min.value(), max_gc=self.gc_max.value(), num_return=self.num.value(),
                 gc_clamp=self.gc_clamp.value(), max_poly_x=self.poly_x.value(),
-                salt_monovalent=self.salt.value(), salt_divalent=self.mg.value(), dntp=self.dntp.value(), dna_conc=self.dna.value())
+                salt_monovalent=self.salt.value(), salt_divalent=self.mg.value(), dntp=self.dntp.value(), dna_conc=self.dna.value(),
+                circular=self.circ_cb.isChecked())
         except ValueError as e:
             self.pairs = []
             self.table_w.setRowCount(0)
@@ -128,9 +133,12 @@ class PrimerDialog(QDialog):
         self.table_w.setRowCount(0)
         for i, pr in enumerate(self.pairs):
             self.table_w.insertRow(i)
+            L = pr.circular_len
+            rend = pr.right.start + pr.right.length
             vals = [NumItem(i + 1), pr.left.seq, NumItem(pr.left.start + 1), NumItem(pr.left.tm, "{:.1f}"), NumItem(pr.left.gc, "{:.0f}"),
-                    pr.right.seq, NumItem(pr.right.start + pr.right.length), NumItem(pr.right.tm, "{:.1f}"), NumItem(pr.right.gc, "{:.0f}"),
-                    NumItem(pr.product_size), NumItem(pr.penalty, "{:.2f}"), f"{pr.compl_any:.1f}/{pr.compl_end:.1f}"]
+                    pr.right.seq, NumItem(rend - L if (L and rend > L) else rend, "{}" + (" ⟳" if (L and rend > L) else "")),
+                    NumItem(pr.right.tm, "{:.1f}"), NumItem(pr.right.gc, "{:.0f}"),
+                    NumItem(pr.product_size, "{}" + (" ⟳" if pr.crosses_origin else "")), NumItem(pr.penalty, "{:.2f}"), f"{pr.compl_any:.1f}/{pr.compl_end:.1f}"]
             for j, v in enumerate(vals):
                 item = v if isinstance(v, QTableWidgetItem) else QTableWidgetItem(str(v))
                 item.setData(Qt.UserRole + 1, i)
@@ -155,14 +163,18 @@ class PrimerDialog(QDialog):
         gm = gap_map(self.model.rows[self.template_row].seq)
         s = gm[pr.left.start] if pr.left.start < len(gm) else 0
         e_idx = pr.right.start + pr.right.length - 1
-        e = gm[e_idx] + 1 if e_idx < len(gm) else len(gm)
+        if pr.crosses_origin:
+            e = len(gm)                        # the product runs off the end and continues at column 1
+        else:
+            e = gm[e_idx] + 1 if e_idx < len(gm) else len(gm)
         self.pairSelected.emit(self.template_row, s, e)
         L, R = pr.left, pr.right
+        CL = pr.circular_len
         self.detail.setPlainText(
-            f"Pair {i + 1}   product {pr.product_size} bp   penalty {pr.penalty:.2f}\n"
-            f"Left : {L.seq}  pos {L.start + 1}-{L.start + L.length}  Tm {L.tm:.1f}  GC {L.gc:.0f}%  "
+            f"Pair {i + 1}   product {pr.product_size} bp{' (across the origin)' if pr.crosses_origin else ''}   penalty {pr.penalty:.2f}\n"
+            f"Left : {L.seq}  pos {L.pos_text(CL)}  Tm {L.tm:.1f}  GC {L.gc:.0f}%  "
             f"hairpin {L.hairpin:.1f}  self-any {L.self_any:.1f}  self-end {L.self_end:.1f}  3' stability {L.end_stability:.1f}\n"
-            f"Right: {R.seq}  pos {R.start + 1}-{R.start + R.length}  Tm {R.tm:.1f}  GC {R.gc:.0f}%  "
+            f"Right: {R.seq}  pos {R.pos_text(CL)}  Tm {R.tm:.1f}  GC {R.gc:.0f}%  "
             f"hairpin {R.hairpin:.1f}  self-any {R.self_any:.1f}  self-end {R.self_end:.1f}  3' stability {R.end_stability:.1f}\n"
             f"Heterodimer Tm: {P.heterodimer_tm(L.seq, R.seq):.1f} °C")
 
@@ -209,12 +221,13 @@ class PrimerDialog(QDialog):
             return
         gm = gap_map(self.model.rows[self.template_row].seq)
         lines = [f"Pair {i + 1}: mismatches vs each aligned sequence (at template-aligned position)", ""]
+        CL = pr.circular_len
         for label, prm, strand in (("Left ", pr.left, 1), ("Right", pr.right, -1)):
-            s = gm[prm.start]
-            e = gm[prm.start + prm.length - 1] + 1
-            lines.append(f"{label} {prm.seq}  aligned cols {s + 1}-{e}")
+            pcs = [(gm[a], gm[b - 1] + 1) for a, b in prm.pieces(CL)]
+            lines.append(f"{label} {prm.seq}  aligned cols " + " + ".join(f"{a + 1}-{b}" for a, b in pcs)
+                         + (" (across origin)" if len(pcs) > 1 else ""))
             for r in range(self.model.nrows):
-                site = self.model.rows[r].seq[s:e]
+                site = "".join(self.model.rows[r].seq[a:b] for a, b in pcs)
                 site_ug = "".join(c for c in site if c not in "-.~").upper()
                 from Bio.Seq import Seq
                 cmp_ = site_ug if strand > 0 else str(Seq(site_ug).reverse_complement())

@@ -70,6 +70,9 @@ actually use, on a codebase that can keep evolving:
   mitogenomes) or the widest feature-free gap becomes position 1 — optionally
   reverse-complementing so a minus-strand gene reads forward — with sequences, grid
   features, gene models and ORF tracks rotating together, so nothing is split across the origin.
+  Primer design (single template and across-alignment) is ring-aware too: Primer3 runs on the
+  doubled molecule, so primers and products may span the origin (shown as `a-b (across origin)`,
+  ⟳ in the tables), sites are scored in-silico across it, and grid features are split accordingly.
 * **Circular map** – mitogenome/plasmid view with strand-separated gene arrows, GC
   content and GC skew rings, focal wedge synced to the grid; SVG/PNG export.
 * **Primer design across an alignment** – conserved (universal) or discriminating

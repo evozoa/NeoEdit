@@ -1293,7 +1293,7 @@ class MainWindow(QMainWindow):
         rows = self.view.target_rows()
         s = self.view.selection()
         cols = (s[2], s[3]) if s and (s[2] != s[3]) else None
-        d = PrimerDialog(self.model, rows, cols, self)
+        d = PrimerDialog(self.model, rows, cols, self, circular=bool(self.model.circular))
         d.pairSelected.connect(lambda r, s_, e: self.view.select_region(r, r, s_, e - 1))
         d.featuresReady.connect(self._add_features)
         d.show(); self._children.append(d)
@@ -1313,7 +1313,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Design", "Load an alignment of at least two sequences first."); return
         if not self.model.is_nucleotide():
             QMessageBox.information(self, "Design", "Primer design needs nucleotide sequences."); return
-        d = DesignDialog(self.model, self.view, self)
+        d = DesignDialog(self.model, self.view, self, circular=bool(self.model.circular))
         d.featuresReady.connect(self._add_features)
         d.regionSelected.connect(lambda a, b: self.view.select_region(0, self.model.nrows - 1, a, b - 1))
         d.show(); self._children.append(d)

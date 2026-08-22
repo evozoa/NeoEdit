@@ -19,9 +19,10 @@ class DesignDialog(QDialog):
     featuresReady = Signal(list)
     regionSelected = Signal(int, int)
 
-    def __init__(self, model, view, parent=None):
+    def __init__(self, model, view, parent=None, circular: bool = False):
         super().__init__(parent)
         self.setWindowTitle("Design primers across an alignment")
+        self._circular_default = bool(circular)
         self.resize(1100, 720)
         self.setModal(False)
         self.model = model
@@ -98,6 +99,9 @@ class DesignDialog(QDialog):
         self.num = QSpinBox(); self.num.setRange(1, 200); self.num.setValue(30)
         pf.addRow("Product size min", self.prod_min)
         pf.addRow("Product size max", self.prod_max)
+        self.circ_cb = QCheckBox("Circular molecule: products may span the origin")
+        self.circ_cb.setChecked(self._circular_default)
+        pf.addRow("", self.circ_cb)
         pf.addRow("Optimal Tm (°C)", self.opt_tm)
         pf.addRow("Tm ± (°C)", self.tm_span)
         pf.addRow("Candidates to evaluate", self.num)
@@ -172,7 +176,7 @@ class DesignDialog(QDialog):
                 min_conservation=self.min_cons.value(), min_conserved_run=self.min_run.value(),
                 product_range=((self.prod_min.value(), self.prod_max.value()),), num_return=self.num.value(),
                 three_prime_window=self.win_3p.value(), degenerate=self.degenerate.isChecked(),
-                max_degeneracy=self.max_deg.value(),
+                max_degeneracy=self.max_deg.value(), circular=self.circ_cb.isChecked(),
                 primer3_kwargs=dict(opt_tm=self.opt_tm.value(), min_tm=self.opt_tm.value() - self.tm_span.value(),
                                     max_tm=self.opt_tm.value() + self.tm_span.value()),
                 **self._kw())
@@ -192,7 +196,7 @@ class DesignDialog(QDialog):
         for i, ev in enumerate(self.evals):
             st = ev.stats(**kw)
             self.cand.insertRow(i)
-            pos = f"{ev.left_cols[0] + 1:,}–{ev.right_cols[1]:,}"
+            pos = f"{ev.left_cols[0] + 1:,}–{ev.right_cols[1]:,}" + (" ⟳" if ev.pair.crosses_origin else "")
             vals = [NumItem(i + 1), NumItem(ev.score(disc, **kw), "{:.1f}"),
                     ev.left_seq_deg or ev.pair.left.seq, ev.right_seq_deg or ev.pair.right.seq,
                     NumItem(ev.pair.product_size),
@@ -251,7 +255,8 @@ class DesignDialog(QDialog):
         self.pcr.setSortingEnabled(True)
         # alignment-of-sites view
         lines = [f"Pair: F {ev.pair.left.seq}  R {ev.pair.right.seq}   product {ev.pair.product_size} bp",
-                 f"Columns: forward {ev.left_cols[0] + 1}-{ev.left_cols[1]}, reverse {ev.right_cols[0] + 1}-{ev.right_cols[1]}", ""]
+                 f"Columns: forward {ev.cols_text('left')}, reverse {ev.cols_text('right')}"
+                 + ("   — product across the origin" if ev.pair.crosses_origin else ""), ""]
         for label, primer, hits in (("FORWARD", ev.left_seq_deg or ev.pair.left.seq, ev.left_hits),
                                     ("REVERSE", ev.right_seq_deg or ev.pair.right.seq, ev.right_hits)):
             lines.append(f"{label}  {primer}   (5'->3'; '.' = match, lower-case = mismatch, 3' end at right)")
@@ -266,7 +271,7 @@ class DesignDialog(QDialog):
                 lines.append(f" {grp} {h.name[:26].ljust(26)} {marks}  {h.mismatches} mm{flag}")
             lines.append("")
         self.detail.setPlainText("\n".join(lines))
-        self.regionSelected.emit(ev.left_cols[0], ev.right_cols[1])
+        self.regionSelected.emit(ev.left_cols[0], self.model.width if ev.pair.crosses_origin else ev.right_cols[1])
 
     # ------------------------------------------------------------- outputs
     def add_features(self):
@@ -274,11 +279,12 @@ class DesignDialog(QDialog):
         if ev is None:
             return
         feats = []
-        for (c0, c1), strand, nm, seq in ((ev.left_cols, 1, "F", ev.left_seq_deg or ev.pair.left.seq),
-                                          (ev.right_cols, -1, "R", ev.right_seq_deg or ev.pair.right.seq)):
-            for r in range(self.model.nrows):
-                feats.append(Feature(r, c0, c1, strand, "primer", f"{nm} {seq}",
-                                     "#10b981" if strand > 0 else "#ef4444", data={"seq": seq}))
+        for pieces, strand, nm, seq in ((ev.left_pieces or [ev.left_cols], 1, "F", ev.left_seq_deg or ev.pair.left.seq),
+                                        (ev.right_pieces or [ev.right_cols], -1, "R", ev.right_seq_deg or ev.pair.right.seq)):
+            for c0, c1 in pieces:
+                for r in range(self.model.nrows):
+                    feats.append(Feature(r, c0, c1, strand, "primer", f"{nm} {seq}",
+                                         "#10b981" if strand > 0 else "#ef4444", data={"seq": seq}))
         self.featuresReady.emit(feats)
         self.status.setText(f"Added primer features to {self.model.nrows} sequences")
 

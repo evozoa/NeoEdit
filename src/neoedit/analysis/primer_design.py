@@ -140,6 +140,17 @@ class PairEvaluation:
     right_cols: tuple[int, int] = (0, 0)
     left_seq_deg: str = ""                  # degenerate versions (optional)
     right_seq_deg: str = ""
+    left_pieces: list = field(default_factory=list)    # column ranges of the site (2 when across the origin)
+    right_pieces: list = field(default_factory=list)
+
+    def cols_text(self, which: str = "left", length: int | None = None) -> str:
+        pcs = self.left_pieces if which == "left" else self.right_pieces
+        if not pcs:
+            c = self.left_cols if which == "left" else self.right_cols
+            return f"{c[0] + 1:,}-{c[1]:,}"
+        if len(pcs) == 1:
+            return f"{pcs[0][0] + 1:,}-{pcs[0][1]:,}"
+        return f"{pcs[0][0] + 1:,}-{pcs[-1][1]:,} (across origin)"
 
     def amplified_rows(self, **kw) -> list[int]:
         lh = {h.row: h for h in self.left_hits}
@@ -180,16 +191,18 @@ class PairEvaluation:
         return s
 
 
-def _site_from_alignment(row_seq: str, c0: int, c1: int, strand: int) -> str:
-    """Template site in primer orientation (gaps removed)."""
-    site = "".join(ch for ch in row_seq[c0:c1] if ch not in GAPSET).upper()
+def _site_from_alignment(row_seq: str, c0: int, c1: int, strand: int, pieces=None) -> str:
+    """Template site in primer orientation (gaps removed). `pieces` = several column ranges
+    read in order (a site that crosses the origin of a circular molecule)."""
+    ranges = pieces or [(c0, c1)]
+    site = "".join(ch for a, b in ranges for ch in row_seq[a:b] if ch not in GAPSET).upper()
     if strand < 0:
         site = str(Seq(site).reverse_complement())
     return site
 
 
 def score_primer(primer: str, rows: Sequence[str], names: Sequence[str], c0: int, c1: int,
-                 strand: int, three_prime_window: int = 5) -> list[PrimerHit]:
+                 strand: int, three_prime_window: int = 5, pieces=None) -> list[PrimerHit]:
     """Compare `primer` (5'->3') to the site at alignment columns [c0,c1) in every row.
 
     For a forward primer (strand +1) the site is the top strand of the span; for a
@@ -202,7 +215,7 @@ def score_primer(primer: str, rows: Sequence[str], names: Sequence[str], c0: int
     L = len(primer)
     p = primer.upper()
     for i, (seq, name) in enumerate(zip(rows, names)):
-        site = _site_from_alignment(seq, c0, c1, strand)
+        site = _site_from_alignment(seq, c0, c1, strand, pieces)
         covered = len(site) >= L - 2 and len(site) > 0
         mm = mm3 = 0
         last = False
@@ -222,10 +235,14 @@ def evaluate_pair(pair: P.PrimerPair, rows: Sequence[str], names: Sequence[str],
                   left_cols: tuple[int, int], right_cols: tuple[int, int],
                   include_rows: Sequence[int] = (), exclude_rows: Sequence[int] = (),
                   three_prime_window: int = 5) -> PairEvaluation:
+    # a column span may be given as a list of pieces (site across the origin of a circular molecule)
+    lp = list(left_cols) if left_cols and isinstance(left_cols[0], (tuple, list)) else [tuple(left_cols)]
+    rp = list(right_cols) if right_cols and isinstance(right_cols[0], (tuple, list)) else [tuple(right_cols)]
     ev = PairEvaluation(pair, include_rows=list(include_rows), exclude_rows=list(exclude_rows),
-                        left_cols=left_cols, right_cols=right_cols)
-    ev.left_hits = score_primer(pair.left.seq, rows, names, *left_cols, 1, three_prime_window)
-    ev.right_hits = score_primer(pair.right.seq, rows, names, *right_cols, -1, three_prime_window)
+                        left_cols=(lp[0][0], lp[-1][1]), right_cols=(rp[0][0], rp[-1][1]))
+    ev.left_pieces, ev.right_pieces = lp, rp
+    ev.left_hits = score_primer(pair.left.seq, rows, names, lp[0][0], lp[0][1], 1, three_prime_window, pieces=lp)
+    ev.right_hits = score_primer(pair.right.seq, rows, names, rp[0][0], rp[0][1], -1, three_prime_window, pieces=rp)
     return ev
 
 
@@ -304,7 +321,7 @@ def design_on_alignment(rows: Sequence[str], names: Sequence[str],
                         max_mm: int = 3, max_3p: int = 0, require_last: bool = True,
                         primer3_kwargs: dict | None = None,
                         degenerate: bool = False, degeneracy_threshold: float = 0.05,
-                        max_degeneracy: int = 64) -> list[PairEvaluation]:
+                        max_degeneracy: int = 64, circular: bool = False) -> list[PairEvaluation]:
     """Design primers on the alignment and rank them.
 
     rows/names are the *aligned* sequences. Primer3 designs on the template row
@@ -337,7 +354,7 @@ def design_on_alignment(rows: Sequence[str], names: Sequence[str],
 
     runs = conserved_runs(cons_t, min_conservation, min_conserved_run)
     longest = max((b - a for a, b in runs), default=0)
-    kw = dict(product_range=product_range, num_return=num_return)
+    kw = dict(product_range=product_range, num_return=num_return, circular=circular)
     kw.update(primer3_kwargs or {})
     mask_applied = True
     notes = ""
@@ -357,15 +374,19 @@ def design_on_alignment(rows: Sequence[str], names: Sequence[str],
         except ValueError:
             raise ValueError(str(e))
 
+    L = len(tmpl)
+
+    def cols_of(prm):
+        """Alignment column piece(s) of a primer site (two when it crosses the origin)."""
+        return [(t2c[a], t2c[min(len(t2c) - 1, b - 1)] + 1) for a, b in prm.pieces(L if circular else None)]
+
     evals = []
     for pr in pairs:
-        lc = (t2c[pr.left.start], t2c[min(len(t2c) - 1, pr.left.start + pr.left.length - 1)] + 1)
-        rs = pr.right.start
-        rc = (t2c[rs], t2c[min(len(t2c) - 1, rs + pr.right.length - 1)] + 1)
+        lc, rc = cols_of(pr.left), cols_of(pr.right)
         ev = evaluate_pair(pr, rows, names, lc, rc, inc, exc, three_prime_window)
         if degenerate:
-            ev.left_seq_deg = degenerate_primer_for(rows, inc, *lc, 1, degeneracy_threshold, max_degeneracy)[0]
-            ev.right_seq_deg = degenerate_primer_for(rows, inc, *rc, -1, degeneracy_threshold, max_degeneracy)[0]
+            ev.left_seq_deg = degenerate_primer_for(rows, inc, *lc[0], 1, degeneracy_threshold, max_degeneracy)[0] if len(lc) == 1 else ""
+            ev.right_seq_deg = degenerate_primer_for(rows, inc, *rc[0], -1, degeneracy_threshold, max_degeneracy)[0] if len(rc) == 1 else ""
         evals.append(ev)
     kwargs = dict(max_mm=max_mm, max_3p=max_3p, require_last=require_last)
     evals.sort(key=lambda e: -e.score(discriminating, **kwargs))
