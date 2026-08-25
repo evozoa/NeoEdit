@@ -1,14 +1,16 @@
 name: Build installers
 
-# - pull_request:        run the test suite
-# - workflow_dispatch:   tests + build the Windows installer and both macOS disk images
-#                        (downloadable from the run's "Artifacts")
-# - push of a tag v*:    all of the above, then publish a GitHub Release with the three
-#                        installers attached (README links point at releases/latest)
+# - pull_request:                 run the test suite
+# - push to main / packaging/**,
+#   or workflow_dispatch:         tests + build the Windows installer and both macOS disk
+#                                 images (downloadable from the run's "Artifacts")
+# - push of a tag v*:             all of the above, then publish a GitHub Release with the
+#                                 three installers attached (README links point at releases/latest)
 on:
   pull_request:
   workflow_dispatch:
   push:
+    branches: [main, "packaging/**"]
     tags: ["v*"]
 
 env:
