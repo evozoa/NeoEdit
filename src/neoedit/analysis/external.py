@@ -97,7 +97,9 @@ def find_mafft(override: str | None = None) -> str | None:
 def mafft_version(exe: str) -> str:
     try:
         proc = _run([exe, "--version"], timeout=20)
-        return (proc.stderr or proc.stdout).strip().splitlines()[0]
+        lines = [ln.strip() for ln in (proc.stderr + proc.stdout).splitlines() if ln.strip()]
+        # mafft.bat on Windows prints "Active code page: 65001" before the version line
+        return next((ln for ln in lines if ln.lower().startswith("v") or "mafft" in ln.lower()), lines[0])
     except Exception:
         return "unknown"
 
