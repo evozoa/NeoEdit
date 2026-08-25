@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neoedit"
-version = "0.1.0"
+version = "0.2.0"
 description = "A modern, cross-platform BioEdit-style sequence alignment editor"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,7 @@ dependencies = [
     "biopython>=1.83",
     "primer3-py>=2.0",
     "numpy>=1.24",
+    "certifi",
 ]
 
 [project.optional-dependencies]
@@ -29,7 +30,7 @@ neoedit-gui = "neoedit.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-neoedit = ["resources/bioedit_tables/*.tab", "resources/icons/*"]
+neoedit = ["resources/bioedit_tables/*.tab", "resources/icons/*", "resources/*.fasta"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

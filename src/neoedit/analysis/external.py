@@ -5,6 +5,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tempfile
 import webbrowser
 from urllib.parse import quote
@@ -35,9 +36,53 @@ def mafft_install_hint() -> str:
     return INSTALL_HINTS.get(platform.system(), INSTALL_HINTS["Linux"])
 
 
+def bundled_mafft_dir() -> str | None:
+    """`mafft/` next to the frozen (PyInstaller) app's resources, else None."""
+    if not getattr(sys, "frozen", False):
+        return None
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(sys.executable)
+    d = os.path.join(base, "mafft")
+    return d if os.path.isdir(d) else None
+
+
+def bundled_mafft() -> str | None:
+    """The MAFFT launcher shipped inside a packaged NeoEdit (Windows: mafft.bat from the
+    mafft-win package; macOS: the `mafft` script + `libexec/` from Homebrew), else None."""
+    d = bundled_mafft_dir()
+    if not d:
+        return None
+    for name in ("mafft.bat", "mafft"):
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def is_bundled_mafft(exe: str | None) -> bool:
+    d = bundled_mafft_dir()
+    return bool(exe and d and os.path.abspath(exe).startswith(os.path.abspath(d)))
+
+
+def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
+    """subprocess.run for MAFFT: no console window in a windowed Windows build, no stdin,
+    and MAFFT_BINARIES pointed at the bundled `libexec/` so the `mafft` script finds its
+    binaries wherever the app is installed."""
+    env = None
+    libexec = os.path.join(os.path.dirname(cmd[0]), "libexec")
+    if os.path.isdir(libexec):
+        env = {**os.environ, "MAFFT_BINARIES": libexec}
+    kw = dict(capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
+    if os.name == "nt":
+        kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return subprocess.run(cmd, **kw)
+
+
 def find_mafft(override: str | None = None) -> str | None:
     if override and os.path.exists(override):
         return override
+    b = bundled_mafft()
+    if b:
+        return b
     for cand in ("mafft", "mafft.bat", "mafft-linsi"):
         p = shutil.which(cand)
         if p:
@@ -51,7 +96,7 @@ def find_mafft(override: str | None = None) -> str | None:
 
 def mafft_version(exe: str) -> str:
     try:
-        proc = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=20)
+        proc = _run([exe, "--version"], timeout=20)
         return (proc.stderr or proc.stdout).strip().splitlines()[0]
     except Exception:
         return "unknown"
@@ -83,7 +128,7 @@ def run_mafft(rows: list[SequenceRow], exe: str | None = None, strategy: int = 0
             for i, r in enumerate(rows):
                 fh.write(f">s{i}\n{r.ungapped()}\n")
         cmd = [exe, "--quiet"] + args + [inp]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = _run(cmd, timeout=timeout)
         if proc.returncode != 0 or not proc.stdout.strip():
             raise RuntimeError(f"MAFFT failed (exit {proc.returncode}):\n{proc.stderr[-2000:]}")
         text = proc.stdout
@@ -130,7 +175,7 @@ def mafft_add(existing: list[SequenceRow], new: list[SequenceRow], exe: str | No
         if adjust_direction:
             cmd.append("--adjustdirection")
         cmd += ["--add", add, ref]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = _run(cmd, timeout=timeout)
         if proc.returncode != 0 or not proc.stdout.strip():
             raise RuntimeError(f"MAFFT --add failed (exit {proc.returncode}):\n{proc.stderr[-2000:]}")
     m = mio.loads(proc.stdout, "fasta")

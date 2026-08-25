@@ -6,6 +6,7 @@ dist/
 .pytest_cache/
 .venv/
 *.spec
+!packaging/*.spec
 .DS_Store
 
 # user data (not distributed)

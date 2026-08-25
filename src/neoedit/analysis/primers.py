@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import primer3
+import primer3.bindings  # explicit: primer3/__init__ loads it lazily, which frozen builds miss
 
 from ..model.alignment import GAP_CHARS, Feature
 

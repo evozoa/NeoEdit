@@ -5,6 +5,7 @@ import json
 import os
 import re
 import socket
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -13,6 +14,27 @@ import urllib.request
 from .. import __version__
 
 USER_AGENT = f"NeoEdit/{__version__} (+https://github.com/evozoa/NeoEdit)"
+
+
+def ca_bundle() -> str | None:
+    """certifi's CA file when available. A frozen (PyInstaller) Python on macOS has no system
+    certificate path, so without this every HTTPS request fails with CERTIFICATE_VERIFY_FAILED."""
+    try:
+        import certifi
+        p = certifi.where()
+        return p if os.path.exists(p) else None
+    except Exception:
+        return None
+
+
+_SSL_CONTEXT = None
+
+
+def _ssl_context() -> ssl.SSLContext:
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is None:
+        _SSL_CONTEXT = ssl.create_default_context(cafile=ca_bundle())
+    return _SSL_CONTEXT
 
 
 class RemoteError(Exception):
@@ -49,7 +71,7 @@ def http_get(url: str, *, headers: dict | None = None, data: bytes | None = None
     for attempt in range(retries + 1):
         req = urllib.request.Request(url, data=data, headers=hdrs)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
                 return resp.read()
         except urllib.error.HTTPError as e:
             body = ""

@@ -1,0 +1,10 @@
+NeoEdit ships an unmodified copy of MAFFT so that Alignment > MAFFT works out of the box.
+
+MAFFT is a separate program by Kazutaka Katoh (https://mafft.cbrc.jp/alignment/software/),
+distributed under the GNU General Public License (GPL). It is not part of NeoEdit (MIT
+licensed); NeoEdit only runs it as an external command. Its license text is in the
+mafft/ folder next to this file (COPYING / LICENSE), and its source code is available
+from the MAFFT web site.
+
+  Katoh K, Standley DM (2013) MAFFT multiple sequence alignment software version 7:
+  improvements in performance and usability. Mol Biol Evol 30:772-780.

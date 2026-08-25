@@ -1,0 +1,173 @@
+name: Build installers
+
+# - pull_request:        run the test suite
+# - workflow_dispatch:   tests + build the Windows installer and both macOS disk images
+#                        (downloadable from the run's "Artifacts")
+# - push of a tag v*:    all of the above, then publish a GitHub Release with the three
+#                        installers attached (README links point at releases/latest)
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+env:
+  PYTHON_VERSION: "3.12"
+  MAFFT_WIN_URL: https://mafft.cbrc.jp/alignment/software/mafft-7.526-win64-signed.zip
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Qt runtime libraries for headless tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 \
+            libxkbcommon-x11-0 libdbus-1-3 libfontconfig1 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-shape0 libxcb-xkb1 libxcb-image0 libxcb-render-util0
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  version:
+    # One place that decides the version string; on a tag it must match neoedit.__version__.
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          VERSION=$(python3 -c "import re;print(re.search(r'__version__ = \"([^\"]+)\"', open('src/neoedit/__init__.py').read()).group(1))")
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG" != "$VERSION" ]]; then
+              echo "::error::tag v$TAG does not match neoedit.__version__ = $VERSION"; exit 1
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "NeoEdit $VERSION"
+
+  windows:
+    if: github.event_name != 'pull_request'
+    needs: [version]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install . pyinstaller
+      - name: Bundle MAFFT (Windows package)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:MAFFT_WIN_URL -OutFile mafft-win.zip
+          Expand-Archive -Path mafft-win.zip -DestinationPath mafft-tmp
+          $src = Get-ChildItem mafft-tmp -Directory | Select-Object -First 1
+          Move-Item $src.FullName packaging\mafft
+          Copy-Item packaging\MAFFT-NOTICE.txt packaging\mafft\
+          if (-not (Test-Path packaging\mafft\mafft.bat)) { throw "mafft.bat not found in the MAFFT package" }
+          Get-ChildItem packaging\mafft | Select-Object Name
+      - name: PyInstaller
+        run: pyinstaller --noconfirm --clean packaging/neoedit.spec
+      - name: Self-test the frozen app
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\NeoEdit\NeoEdit.exe -ArgumentList '--self-test','selftest.json' -Wait -PassThru
+          if (Test-Path selftest.json) { Get-Content selftest.json } else { Write-Host "no report written" }
+          if ($p.ExitCode -ne 0) { throw "self-test failed (exit $($p.ExitCode))" }
+      - name: Inno Setup installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = (Get-Command ISCC.exe).Source }
+          & $iscc "/DVersion=${{ needs.version.outputs.version }}" packaging\neoedit.iss
+          Get-ChildItem dist\*.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NeoEdit-Windows-Setup
+          path: dist/NeoEdit-Windows-Setup.exe
+          if-no-files-found: error
+
+  macos:
+    if: github.event_name != 'pull_request'
+    needs: [version]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: AppleSilicon
+          - runner: macos-15-intel
+            arch: Intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install . pyinstaller
+      - name: Bundle MAFFT (Homebrew build for this architecture)
+        run: |
+          brew install mafft
+          P="$(brew --prefix mafft)"
+          mkdir -p packaging/mafft
+          cp "$P/bin/mafft" packaging/mafft/mafft
+          cp -R "$P/libexec/mafft" packaging/mafft/libexec
+          for f in "$P"/COPYING "$P"/LICENSE* "$P"/share/doc/mafft/*; do [ -f "$f" ] && cp "$f" packaging/mafft/ || true; done
+          cp packaging/MAFFT-NOTICE.txt packaging/mafft/
+          chmod +x packaging/mafft/mafft packaging/mafft/libexec/*
+          echo "arch: $(uname -m); binaries: $(file packaging/mafft/libexec/disttbfast | cut -d: -f2)"
+          MAFFT_BINARIES="$PWD/packaging/mafft/libexec" packaging/mafft/mafft --version
+      - name: PyInstaller
+        run: pyinstaller --noconfirm --clean packaging/neoedit.spec
+      - name: Ad-hoc sign
+        # Unsigned arm64 binaries are refused outright; an ad-hoc signature lets Gatekeeper
+        # offer "Open Anyway" instead. Sign the bundled MAFFT executables, then the app.
+        run: |
+          find dist/NeoEdit.app -type f -perm +111 -path "*mafft*" -exec codesign --force --sign - {} \;
+          codesign --force --deep --sign - dist/NeoEdit.app
+          codesign --verify --deep --strict --verbose=2 dist/NeoEdit.app
+      - name: Self-test the frozen app
+        run: |
+          dist/NeoEdit.app/Contents/MacOS/NeoEdit --self-test selftest.json || status=$?
+          cat selftest.json || true
+          exit ${status:-0}
+      - name: Disk image
+        run: packaging/make_dmg.sh dist/NeoEdit.app "dist/NeoEdit-macOS-${{ matrix.arch }}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NeoEdit-macOS-${{ matrix.arch }}
+          path: dist/NeoEdit-macOS-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, version, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - run: ls -lh installers
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: NeoEdit ${{ needs.version.outputs.version }}
+          body_path: packaging/release-notes.md
+          files: |
+            installers/NeoEdit-Windows-Setup.exe
+            installers/NeoEdit-macOS-AppleSilicon.dmg
+            installers/NeoEdit-macOS-Intel.dmg
+          fail_on_unmatched_files: true
