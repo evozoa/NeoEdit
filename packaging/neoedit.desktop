@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=NeoEdit
+GenericName=Sequence alignment editor
+Comment=Sequence alignment editor and genome viewer
+Exec=/opt/neoedit/NeoEdit %F
+Icon=neoedit
+Terminal=false
+StartupNotify=true
+StartupWMClass=neoedit
+Categories=Science;Biology;Education;
+MimeType=text/x-fasta;chemical/seq-na-fasta;chemical/seq-aa-fasta;
+Keywords=DNA;protein;alignment;FASTA;GenBank;BioEdit;

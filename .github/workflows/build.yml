@@ -2,10 +2,10 @@ name: Build installers
 
 # - pull_request:                 run the test suite
 # - push to main / packaging/**,
-#   or workflow_dispatch:         tests + build the Windows installer and both macOS disk
-#                                 images (downloadable from the run's "Artifacts")
+#   or workflow_dispatch:         tests + build the Windows installer, both macOS disk images
+#                                 and the Linux .deb (downloadable from the run's "Artifacts")
 # - push of a tag v*:             all of the above, then publish a GitHub Release with the
-#                                 three installers attached (README links point at releases/latest)
+#                                 four installers attached (README links point at releases/latest)
 on:
   pull_request:
   workflow_dispatch:
@@ -16,6 +16,11 @@ on:
 env:
   PYTHON_VERSION: "3.12"
   MAFFT_WIN_URL: https://mafft.cbrc.jp/alignment/software/mafft-7.526-win64-signed.zip
+  # What Qt's xcb/offscreen platform plugins load from the system (also the .deb's Depends:)
+  QT_APT_LIBS: >-
+    libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1 libglib2.0-0
+    libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1 libxcb-image0
+    libxcb-render-util0 libxcb-util1
 
 jobs:
   test:
@@ -29,9 +34,7 @@ jobs:
       - name: Qt runtime libraries for headless tests
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 \
-            libxkbcommon-x11-0 libdbus-1-3 libfontconfig1 libxcb-cursor0 libxcb-icccm4 \
-            libxcb-keysyms1 libxcb-shape0 libxcb-xkb1 libxcb-image0 libxcb-render-util0
+          sudo apt-get install -y --no-install-recommends $QT_APT_LIBS
       - run: pip install -e ".[dev]"
       - run: pytest -q
         env:
@@ -151,9 +154,61 @@ jobs:
           path: dist/NeoEdit-macOS-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
+  linux:
+    if: github.event_name != 'pull_request'
+    needs: [version]
+    # ubuntu-22.04 on purpose: a PyInstaller build needs glibc >= the build host's, so building
+    # on 22.04 (glibc 2.35) gives a .deb that runs on Ubuntu 22.04, 24.04 and later. If this
+    # runner image is ever retired, use `runs-on: ubuntu-latest` + `container: ubuntu:22.04`.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install . pyinstaller
+      - name: Qt runtime libraries, MAFFT, desktop-file-utils
+        # The Qt libs must be present at build time so PyInstaller bundles the ones it can
+        # (the .deb also declares them as Depends for whatever it does not).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $QT_APT_LIBS mafft desktop-file-utils
+      - name: Bundle MAFFT (Ubuntu package, same layout as the macOS build)
+        run: |
+          mkdir -p packaging/mafft
+          cp /usr/bin/mafft packaging/mafft/mafft
+          cp -R /usr/lib/mafft/lib/mafft packaging/mafft/libexec
+          cp /usr/share/doc/mafft/copyright packaging/mafft/
+          cp packaging/MAFFT-NOTICE.txt packaging/mafft/
+          chmod +x packaging/mafft/mafft packaging/mafft/libexec/*
+          MAFFT_BINARIES="$PWD/packaging/mafft/libexec" packaging/mafft/mafft --version
+      - name: PyInstaller
+        run: pyinstaller --noconfirm --clean packaging/neoedit.spec
+      - name: Self-test the frozen app
+        run: |
+          dist/NeoEdit/NeoEdit --self-test selftest.json || status=$?
+          cat selftest.json || true
+          exit ${status:-0}
+      - name: Debian package
+        run: packaging/make_deb.sh dist/NeoEdit dist/NeoEdit-Linux-x86_64.deb "${{ needs.version.outputs.version }}"
+      - name: Install the package and self-test the installed copy
+        run: |
+          sudo apt-get install -y ./dist/NeoEdit-Linux-x86_64.deb
+          desktop-file-validate /usr/share/applications/neoedit.desktop
+          test -x /usr/bin/neoedit
+          /opt/neoedit/NeoEdit --self-test selftest-installed.json || status=$?
+          cat selftest-installed.json || true
+          exit ${status:-0}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NeoEdit-Linux-x86_64
+          path: dist/NeoEdit-Linux-x86_64.deb
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, version, windows, macos]
+    needs: [test, version, windows, macos, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -172,4 +227,5 @@ jobs:
             installers/NeoEdit-Windows-Setup.exe
             installers/NeoEdit-macOS-AppleSilicon.dmg
             installers/NeoEdit-macOS-Intel.dmg
+            installers/NeoEdit-Linux-x86_64.deb
           fail_on_unmatched_files: true

@@ -1,7 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for the standalone NeoEdit build (Windows / macOS).
+# PyInstaller spec for the standalone NeoEdit build (Windows / macOS / Linux).
 #   pyinstaller --noconfirm --clean packaging/neoedit.spec
-# Produces dist/NeoEdit/ (one-dir) and, on macOS, dist/NeoEdit.app.
+# Produces dist/NeoEdit/ (one-dir) and, on macOS, dist/NeoEdit.app. Linux: packaging/make_deb.sh
+# wraps dist/NeoEdit/ in a .deb (icons/menu entry come from packaging/neoedit.desktop).
 # If packaging/mafft/ exists (see .github/workflows/build.yml) it is shipped inside the app
 # and found by neoedit.analysis.external.bundled_mafft().
 import os

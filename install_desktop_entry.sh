@@ -25,21 +25,10 @@ MSG
 fi
 ICONS="$SRC/src/neoedit/resources/icons"
 
-sudo install -Dm644 /dev/stdin /usr/share/applications/neoedit.desktop <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=NeoEdit
-GenericName=Sequence alignment editor
-Comment=Sequence alignment editor and genome viewer
-Exec=$SRC/launch.sh %F
-Icon=neoedit
-Terminal=false
-StartupNotify=true
-StartupWMClass=neoedit
-Categories=Science;Biology;Education;
-MimeType=text/x-fasta;chemical/seq-na-fasta;chemical/seq-aa-fasta;
-Keywords=DNA;protein;alignment;FASTA;GenBank;BioEdit;
-DESKTOP
+# packaging/neoedit.desktop is the entry shipped in the .deb (Exec=/opt/neoedit/NeoEdit);
+# for a source checkout point Exec at launch.sh instead.
+sed "s|^Exec=.*|Exec=$SRC/launch.sh %F|" "$SRC/packaging/neoedit.desktop" \
+  | sudo install -Dm644 /dev/stdin /usr/share/applications/neoedit.desktop
 
 for S in 16 24 32 48 64 128 256; do
   sudo install -Dm644 "$ICONS/neoedit_${S}.png" \

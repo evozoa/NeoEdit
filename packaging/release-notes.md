@@ -7,6 +7,7 @@ Download the file for your computer, then follow the one-time steps below.
 | **Windows** (10 / 11) | `NeoEdit-Windows-Setup.exe` |
 | **Mac with Apple Silicon** (M1, M2, M3, M4 — most Macs from 2021 on) | `NeoEdit-macOS-AppleSilicon.dmg` |
 | **Mac with an Intel chip** (older Macs) | `NeoEdit-macOS-Intel.dmg` |
+| **Linux** (Ubuntu 22.04 or newer, Mint, Debian) | `NeoEdit-Linux-x86_64.deb` |
 
 Not sure which Mac you have? Click the Apple menu ▸ **About This Mac**: the "Chip" line says *Apple M…* (Apple Silicon) or *Intel*.
 
@@ -23,6 +24,11 @@ Not sure which Mac you have? Click the Apple menu ▸ **About This Mac**: the "C
 2. Open **Applications** and double-click **NeoEdit**. macOS will say *"Apple could not verify NeoEdit is free of malware"* — click **Done** (not "Move to Trash").
 3. Open **System Settings ▸ Privacy & Security**, scroll down to the *Security* section, and click **Open Anyway** next to the NeoEdit message. Enter your password and click **Open**.
 4. That's it — from now on NeoEdit opens normally.
+
+### Linux
+
+1. Double-click the downloaded `NeoEdit-Linux-x86_64.deb` and click **Install** in the App Center, or run `sudo apt install ./NeoEdit-Linux-x86_64.deb` in a terminal opened in *Downloads*.
+2. Press the Super key and type **NeoEdit**. Remove later with `sudo apt remove neoedit`.
 
 MAFFT (for *Alignment ▸ MAFFT*) is included. Everything works offline except *File ▸ Import from NCBI / Ensembl / UCSC*, which needs an internet connection.
 

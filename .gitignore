@@ -11,3 +11,4 @@ dist/
 
 # user data (not distributed)
 *.bio
+packaging/mafft/

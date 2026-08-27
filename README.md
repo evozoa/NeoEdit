@@ -16,6 +16,7 @@ Biopython and Primer3.
 | **Windows** 10 / 11 | [NeoEdit-Windows-Setup.exe](https://github.com/evozoa/NeoEdit/releases/latest/download/NeoEdit-Windows-Setup.exe) |
 | **Mac, Apple Silicon** (M1–M4) | [NeoEdit-macOS-AppleSilicon.dmg](https://github.com/evozoa/NeoEdit/releases/latest/download/NeoEdit-macOS-AppleSilicon.dmg) |
 | **Mac, Intel** | [NeoEdit-macOS-Intel.dmg](https://github.com/evozoa/NeoEdit/releases/latest/download/NeoEdit-macOS-Intel.dmg) |
+| **Linux** (Ubuntu 22.04+, Mint, Debian 12+; x86_64) | [NeoEdit-Linux-x86_64.deb](https://github.com/evozoa/NeoEdit/releases/latest/download/NeoEdit-Linux-x86_64.deb) |
 
 The builds are not code-signed, so the first launch needs one extra click — Windows:
 **More info ▸ Run anyway**; Mac: **System Settings ▸ Privacy & Security ▸ Open Anyway**.
@@ -151,11 +152,14 @@ neoedit --self-test report.json   # checks resources, MAFFT and network access o
 
 ### Building the installers
 
-`.github/workflows/build.yml` builds the Windows installer (PyInstaller + Inno Setup) and the two
-macOS disk images (PyInstaller, ad-hoc signed) on GitHub's runners, bundling MAFFT, and runs
-`NeoEdit --self-test` on each frozen build. *Run workflow* on the Actions tab produces them as
-artifacts; pushing a tag `vX.Y.Z` (matching `neoedit.__version__`) publishes a release with the three
-files attached. Locally: `pip install pyinstaller && pyinstaller --noconfirm packaging/neoedit.spec`.
+`.github/workflows/build.yml` builds the Windows installer (PyInstaller + Inno Setup), the two
+macOS disk images (PyInstaller, ad-hoc signed) and the Linux `.deb` (PyInstaller on Ubuntu 22.04 +
+`packaging/make_deb.sh`, installs to `/opt/neoedit`) on GitHub's runners, bundling MAFFT, and runs
+`NeoEdit --self-test` on each frozen build (and on the installed `.deb`). *Run workflow* on the
+Actions tab produces them as artifacts; pushing a tag `vX.Y.Z` (matching `neoedit.__version__`)
+publishes a release with the four files attached. Locally:
+`pip install pyinstaller && pyinstaller --noconfirm packaging/neoedit.spec`, then on Linux
+`packaging/make_deb.sh dist/NeoEdit dist/NeoEdit-Linux-x86_64.deb`.
 
 ### Desktop integration (icon in the Start Menu / taskbar)
 
