@@ -53,7 +53,7 @@ actually use, on a codebase that can keep evolving:
   table 1) and shaded a neutral grey, so coding regions are shown on the protein line
   rather than washing out the nucleotides; outside them you choose the frame (+1…−3)
   and code, or leave it blank.
-* **ORF finder (MitoFinder-style)** – alternate genetic codes (default vertebrate
+* **ORF finder (MitoDiveR-style)** – alternate genetic codes (default vertebrate
   mito), alternative start codons, both strands, 5′/3′ partial ORFs (incomplete
   stop codons), nested ORFs; results as features; export GFF3 / GenBank feature
   table / protein & nucleotide FASTA.

@@ -15,7 +15,7 @@ from .common import codon_table_combo, make_table, NumItem, save_text
 
 
 class ORFFinderDialog(QDialog):
-    """MitoFinder-style ORF finder with alternate genetic codes."""
+    """MitoDiveR-style ORF finder with alternate genetic codes."""
     orfSelected = Signal(int, int, int)        # row, start(gapped), end(gapped)
     featuresReady = Signal(list)               # list[Feature]
     orfsFound = Signal(list, int)              # list[ORF], genetic code table

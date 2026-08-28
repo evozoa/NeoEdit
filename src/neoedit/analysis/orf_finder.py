@@ -1,4 +1,4 @@
-"""ORF finder with alternate genetic codes, MitoFinder-style options.
+"""ORF finder with alternate genetic codes, MitoDiveR-style options.
 
 Positions are 0-based half-open on the *ungapped* sequence; `map_to_gapped`
 converts back to alignment coordinates.
