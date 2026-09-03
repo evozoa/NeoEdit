@@ -104,7 +104,7 @@ class EnsemblClient:
              timeout: float = 60.0, retries: int = 3) -> bytes:
         q = dict(params or {})
         q["content-type"] = content_type
-        url = server + path + "?" + urllib.parse.urlencode(q, doseq=True, safe=":,")
+        url = server + path + "?" + urllib.parse.urlencode(q, doseq=True, safe=":,/")
         return self._fetch(url, headers={"Accept": content_type}, timeout=timeout, retries=retries)
 
     def _software_release(self, server: str) -> int | None:
