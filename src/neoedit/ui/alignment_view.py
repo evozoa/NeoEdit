@@ -100,6 +100,7 @@ class AlignmentView(QAbstractScrollArea):
         self.shade_threshold = 0.5
         self._consensus_cache = None
         self._drag_block = None       # (rows, start, end, last_col, kind)  kind: "crunch" | "downstream"
+        self._row_drag = None         # (rows, anchor_row) while dragging sequence names to reorder rows
         self.feature_provider = None  # optional callable(row, c0, c1) -> list[Feature] (e.g. genome annotation)
         self._dragging_sel = False
         self._press_pos = None
@@ -518,13 +519,23 @@ class AlignmentView(QAbstractScrollArea):
 
         # --- rows
         selcol = QColor(40, 90, 200, 110) if not dark else QColor(120, 170, 255, 110)
+        # which row names to highlight: an explicit row selection (name-panel click), else the
+        # row range spanned by the current cell selection, else just the row under the cursor
+        # (so clicking a residue in the grid highlights that sequence's name, BioEdit-style)
+        if self.sel_rows:
+            hl_rows = self.sel_rows
+        elif self.anchor is not None:
+            a0, a1 = sorted((self.anchor[0], self.cur_row))
+            hl_rows = range(a0, a1 + 1)
+        else:
+            hl_rows = (self.cur_row,) if m.nrows else ()
         for r in range(r0, r1):
             row = m.rows[r]
             y = self.header_h + (r - vs) * self.row_h
             # name
-            row_selected = r in self.sel_rows or (sel and sel[0] <= r <= sel[1] and self.sel_rows)
+            row_selected = r in hl_rows
             p.fillRect(0, y, grid_left - 1, self.row_h,
-                       pal.color(QPalette.Highlight) if r in self.sel_rows else pal.color(QPalette.Window))
+                       pal.color(QPalette.Highlight) if row_selected else pal.color(QPalette.Window))
             name_x = 4
             if r == m.ref_row and m.nrows > 1:
                 # pinned reference: small triangle marker
@@ -536,7 +547,7 @@ class AlignmentView(QAbstractScrollArea):
                 gcol = QColor(m.group_color(row.group))
                 p.fillRect(0, y, 5, self.row_h, gcol)
                 name_x = 8
-            p.setPen(pal.color(QPalette.HighlightedText) if r in self.sel_rows else fg)
+            p.setPen(pal.color(QPalette.HighlightedText) if row_selected else fg)
             name = self._fm.elidedText(row.name, Qt.ElideRight, grid_left - name_x - 4)
             p.drawText(name_x, y + self._ty, name)
             # residues
@@ -724,6 +735,9 @@ class AlignmentView(QAbstractScrollArea):
                 self.sel_rows = {row}
             self.anchor = None
             self.cur_row = row
+            self._row_drag = (sorted(self.sel_rows), row) if row in self.sel_rows else None
+            if self._row_drag is not None:
+                self.model.begin_batch("Move sequence")
             self.cursorChanged.emit(self.cur_row, self.cur_col)
             self.selectionChanged.emit()
             self.viewport().update()
@@ -789,6 +803,26 @@ class AlignmentView(QAbstractScrollArea):
         pos = e.position().toPoint()
         if self._name_drag and e.buttons() & Qt.LeftButton:
             self.set_name_width(pos.x())
+            return
+        if self._row_drag is not None and e.buttons() & Qt.LeftButton:
+            rows, anchor_row = self._row_drag
+            row, _ = self.cell_at(pos)
+            row = max(0, min(self.model.nrows - 1, row))
+            idx = sorted(rows)
+            # clamp to the furthest valid shift rather than rejecting outright, so a drag that
+            # jumps past the top/bottom in one event (fast mouse, coalesced moves) still lands
+            # at the nearest edge instead of doing nothing
+            delta = max(-idx[0], min(self.model.nrows - 1 - idx[-1], row - anchor_row))
+            if delta:
+                self.model.move_rows(rows, delta)
+                rows = [r + delta for r in rows]
+                self._row_drag = (rows, anchor_row + delta)
+                self.sel_rows = set(rows)
+                self.cur_row = anchor_row + delta
+                self.ensure_visible(self.cur_row, None)
+                self.selectionChanged.emit()
+                self.viewport().update()
+            self.viewport().setCursor(Qt.ClosedHandCursor)
             return
         on_div = self.on_divider(pos) and self._drag_block is None and not self._dragging_sel
         if on_div != self._divider_hover:
@@ -860,6 +894,12 @@ class AlignmentView(QAbstractScrollArea):
             self._drag_block = None
             self.model.end_batch()
             self.viewport().setCursor(Qt.IBeamCursor)
+        if self._row_drag is not None:
+            self._row_drag = None
+            self._press_pos = None
+            self.model.end_batch()
+            self.viewport().setCursor(Qt.ArrowCursor)
+            return
         self._dragging_sel = False
         # click without drag inside the selection clears it and places cursor
         if self._press_pos is not None and e.position().toPoint() == self._press_pos and not self.sel_rows:
