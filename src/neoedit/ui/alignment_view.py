@@ -100,7 +100,8 @@ class AlignmentView(QAbstractScrollArea):
         self.shade_threshold = 0.5
         self._consensus_cache = None
         self._drag_block = None       # (rows, start, end, last_col, kind)  kind: "crunch" | "downstream"
-        self._row_drag = None         # (rows, anchor_row) while dragging sequence names to reorder rows
+        self._row_drag = None         # (rows, anchor_row) while dragging an *already-selected* name to reorder rows
+        self._row_select_anchor = None  # row of a fresh name-panel click, while its drag extends the row selection
         self.feature_provider = None  # optional callable(row, c0, c1) -> list[Feature] (e.g. genome annotation)
         self._dragging_sel = False
         self._press_pos = None
@@ -723,21 +724,30 @@ class AlignmentView(QAbstractScrollArea):
                 self.ensure_visible(pr, col)
             return
         if pos.x() < self.name_w:
-            # name panel: row selection
+            # name panel, BioEdit's two-step click: a plain click on an *already*-selected
+            # name arms a reorder-drag (rows move together); any other click (re)selects, and
+            # dragging from there instead grows/shrinks a row-range selection (see mouseMoveEvent)
             if row < 0 or row >= self.model.nrows:
                 return
-            if e.modifiers() & Qt.ControlModifier:
+            ctrl = bool(e.modifiers() & Qt.ControlModifier)
+            shift = bool(e.modifiers() & Qt.ShiftModifier)
+            if not ctrl and not shift and row in self.sel_rows:
+                self._row_drag = (sorted(self.sel_rows), row)
+                self.model.begin_batch("Move sequence")
+                self.cur_row = row
+                self.cursorChanged.emit(self.cur_row, self.cur_col)
+                self.viewport().update()
+                return
+            if ctrl:
                 self.sel_rows ^= {row}
-            elif e.modifiers() & Qt.ShiftModifier and self.sel_rows:
+            elif shift and self.sel_rows:
                 a = min(self.sel_rows | {row}); b = max(self.sel_rows | {row})
                 self.sel_rows = set(range(a, b + 1))
             else:
                 self.sel_rows = {row}
+                self._row_select_anchor = row
             self.anchor = None
             self.cur_row = row
-            self._row_drag = (sorted(self.sel_rows), row) if row in self.sel_rows else None
-            if self._row_drag is not None:
-                self.model.begin_batch("Move sequence")
             self.cursorChanged.emit(self.cur_row, self.cur_col)
             self.selectionChanged.emit()
             self.viewport().update()
@@ -824,6 +834,16 @@ class AlignmentView(QAbstractScrollArea):
                 self.viewport().update()
             self.viewport().setCursor(Qt.ClosedHandCursor)
             return
+        if self._row_select_anchor is not None and e.buttons() & Qt.LeftButton:
+            row, _ = self.cell_at(pos)
+            row = max(0, min(self.model.nrows - 1, row))
+            a, b = sorted((self._row_select_anchor, row))
+            self.sel_rows = set(range(a, b + 1))
+            self.cur_row = row
+            self.ensure_visible(row, None)
+            self.selectionChanged.emit()
+            self.viewport().update()
+            return
         on_div = self.on_divider(pos) and self._drag_block is None and not self._dragging_sel
         if on_div != self._divider_hover:
             self._divider_hover = on_div
@@ -899,6 +919,10 @@ class AlignmentView(QAbstractScrollArea):
             self._press_pos = None
             self.model.end_batch()
             self.viewport().setCursor(Qt.ArrowCursor)
+            return
+        if self._row_select_anchor is not None:
+            self._row_select_anchor = None
+            self._press_pos = None
             return
         self._dragging_sel = False
         # click without drag inside the selection clears it and places cursor
