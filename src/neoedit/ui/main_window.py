@@ -144,6 +144,8 @@ class MainWindow(QMainWindow):
         self.a_copy_raw = A("Copy sequence text only", self.copy_raw, "Ctrl+Shift+C")
         self.a_paste = A("&Paste sequences", self.paste_seqs, "Ctrl+V")
         self.a_selall = A("Select &all", self.view.select_all, "Ctrl+A")
+        self.a_sel_start = A("Select to &Beginning of Sequence", self.view.select_to_start, "Shift+Home")
+        self.a_sel_end = A("Select to &End of Sequence", self.view.select_to_end, "Shift+End")
         self.a_find = A("&Find…", self.find, "Ctrl+F")
         self.a_findnext = A("Find &next", self.find_next, "F3")
         self.a_goto = A("&Go to position…", self.goto, "Ctrl+G")
@@ -319,7 +321,8 @@ class MainWindow(QMainWindow):
         f.addSeparator(); f.addAction(self.a_quit)
 
         e = mb.addMenu("&Edit")
-        for a in (self.a_undo, self.a_redo, None, self.a_copy, self.a_copy_raw, self.a_paste, self.a_selall, None,
+        for a in (self.a_undo, self.a_redo, None, self.a_copy, self.a_copy_raw, self.a_paste, self.a_selall,
+                  self.a_sel_start, self.a_sel_end, None,
                   self.a_find, self.a_findnext, self.a_goto, None,
                   self.a_mode_slide, self.a_mode_edit, self.a_mode_grab, self.a_mode_insert, self.a_mode_over, self.a_downstream, None, self.a_prefs):
             e.addAction(a) if a else e.addSeparator()

@@ -353,6 +353,21 @@ class AlignmentView(QAbstractScrollArea):
         self.selectionChanged.emit()
         self.viewport().update()
 
+    def select_to_start(self):
+        """Extend the selection back to column 0 of the current row (BioEdit: Edit -> Select
+        to Beginning of Sequence; same as Shift+Home)."""
+        if not self.model.nrows:
+            return
+        self.set_cursor(self.cur_row, 0, extend=True)
+
+    def select_to_end(self):
+        """Extend the selection to the last residue of the current row's own sequence (BioEdit:
+        Edit -> Select to End of Sequence; same as Shift+End)."""
+        if not self.model.nrows:
+            return
+        end_col = max(0, len(self.model.rows[self.cur_row].seq) - 1)
+        self.set_cursor(self.cur_row, end_col, extend=True)
+
     def clear_selection(self):
         self.anchor = None
         self.sel_rows.clear()
