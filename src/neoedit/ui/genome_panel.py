@@ -173,6 +173,7 @@ class RegionView(QWidget):
     """Gene models + synteny for the current window; red box = grid's visible columns."""
     windowChanged = Signal(int, int)
     focusRequested = Signal(int, int)       # user clicked: scroll grid to show (start,end)
+    featureSelected = Signal(int, int)      # user clicked a gene/exon: select+scroll to (start,end)
     geneActivated = Signal(object)           # double-click gene
     insertionClicked = Signal(int, int)      # alignment columns of an insertion
     hoverInfo = Signal(str)
@@ -196,6 +197,7 @@ class RegionView(QWidget):
         self.setMouseTracking(True)
         self._drag = None
         self._gene_hits: list[tuple[QRectF, Gene, Transcript]] = []
+        self._exon_hits: list[tuple[QRectF, Gene, Transcript, tuple[int, int]]] = []  # rect, gene, transcript, (exon_start, exon_end)
         self._syn_hits: list[tuple[QRectF, SyntenyBlock]] = []
         self._orf_hits: list[tuple[QRectF, str, str]] = []
         self._ins_hits: list[tuple[QRectF, tuple]] = []
@@ -228,7 +230,7 @@ class RegionView(QWidget):
         W, H = self.width(), self.height()
         s, e = self.win
         left, right = 40, W - 8
-        self._gene_hits.clear(); self._syn_hits.clear(); self._orf_hits.clear(); self._ins_hits.clear()
+        self._gene_hits.clear(); self._exon_hits.clear(); self._syn_hits.clear(); self._orf_hits.clear(); self._ins_hits.clear()
         f = self.font(); f.setPointSize(8); p.setFont(f); fm = QFontMetrics(f)
 
         # ruler
@@ -455,6 +457,7 @@ class RegionView(QWidget):
                 p.setBrush(base.lighter(150)); p.drawRect(QRectF(ex0, mid - 3, w, 6))
             else:
                 p.setBrush(base); p.drawRect(QRectF(ex0, mid - 5, w, 10))
+            self._exon_hits.append((QRectF(ex0, mid - 7, w, 14), g, t, (es, ee)))
         for cs, ce in cds:
             cx0, cx1 = max(left, self._x(cs)), min(right, self._x(ce))
             if cx1 < left or cx0 > right:
@@ -475,6 +478,15 @@ class RegionView(QWidget):
                 return g, t
         return None
 
+    def _hit_exon(self, pos):
+        """Exon rects are drawn on top of (narrower than) their gene's hit rect, so check
+        these first: a click that lands on an exon should select just that exon, not the
+        whole gene."""
+        for r, g, t, span in self._exon_hits:
+            if r.contains(pos):
+                return g, t, span
+        return None
+
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self._drag = (e.position().x(), self.win, False)
@@ -491,6 +503,16 @@ class RegionView(QWidget):
                 self._drag = (x0, (s0, e0), True)
                 self.windowChanged.emit(s, s + w)
             return
+        eh = self._hit_exon(pos)
+        if eh:
+            g, t, (es, ee) = eh
+            self.setCursor(Qt.PointingHandCursor)
+            exon_no = t.exons.index((es, ee)) + 1
+            info = (f"<b>{g.name}</b> exon {exon_no}/{len(t.exons)}  {g.seqid}:{fmt_span(es, ee, self.length if ee > self.length else None)} "
+                    f"({ee - es:,} bp)<br><i>click selects just this exon; click elsewhere on {g.name} selects the whole gene</i>")
+            QToolTip.showText(QCursor.pos(), info, self)
+            self.hoverInfo.emit(f"{g.name} exon {exon_no}/{len(t.exons)}  {g.seqid}:{fmt_span(es, ee, self.length if ee > self.length else None)}")
+            return
         h = self._hit(pos)
         if h:
             g, t = h
@@ -501,7 +523,8 @@ class RegionView(QWidget):
                     + "".join(f"<br>{k}: {v}" for k, v in g.attrs.items() if k in ("description", "product"))
                     + (f"<br><i>lift-over coverage {g.attrs.get('coverage')}, identity {g.attrs.get('sequence_ID')}"
                        f"{' — partial' if g.attrs.get('partial_mapping') == 'True' else ''}"
-                       f"{' — low identity' if g.attrs.get('low_identity') == 'True' else ''}</i>" if "coverage" in g.attrs else ""))
+                       f"{' — low identity' if g.attrs.get('low_identity') == 'True' else ''}</i>" if "coverage" in g.attrs else "")
+                    + "<br><i>click selects the whole gene</i>")
             QToolTip.showText(QCursor.pos(), info, self)
             self.hoverInfo.emit(f"{g.name}  {g.seqid}:{fmt_span(g.start, g.end, self.length if g.end > self.length else None)} ({'+' if g.strand > 0 else '-'})")
             return
@@ -535,10 +558,14 @@ class RegionView(QWidget):
                     self.insertionClicked.emit(ins[3], ins[3] + ins[1])
                     self._drag = None
                     return
+            eh = self._hit_exon(e.position())
             h = self._hit(e.position())
-            if h:
+            if eh:
+                _g, _t, (es, ee) = eh
+                self.featureSelected.emit(es, ee)
+            elif h:
                 g, t = h
-                self.focusRequested.emit(g.start, g.end)
+                self.featureSelected.emit(g.start, g.end)
             elif any(r.contains(e.position()) for r, _n, _t in self._orf_hits):
                 for r, _n, _t in self._orf_hits:
                     if r.contains(e.position()):
@@ -575,6 +602,7 @@ class GenomePanel(QWidget):
     regionVisibilityChanged = Signal(bool)  # region (gene-model) view shown / hidden
     contigSelected = Signal(str)            # user picked a contig
     focusRequested = Signal(int, int)       # scroll grid to region
+    featureSelected = Signal(int, int)      # user clicked a gene/exon: select+scroll to (start,end)
     geneActivated = Signal(object)
     insertionClicked = Signal(int, int)     # alignment columns (not reference coords)
     openRegionRequested = Signal(int, int)  # "open region in new editor window"
@@ -617,6 +645,7 @@ class GenomePanel(QWidget):
         self.overview.windowChanged.connect(self.set_window)
         self.region.windowChanged.connect(self.set_window)
         self.region.focusRequested.connect(self.focusRequested)
+        self.region.featureSelected.connect(self.featureSelected)
         self.region.geneActivated.connect(self.geneActivated)
         self.region.hoverInfo.connect(self.info.setText)
         self.region.insertionClicked.connect(self.insertionClicked)

@@ -78,6 +78,7 @@ class MainWindow(QMainWindow):
         self.synteny_blocks: list = []
         self.genome_panel.contigSelected.connect(self._genome_load_contig)
         self.genome_panel.focusRequested.connect(self._genome_focus)
+        self.genome_panel.featureSelected.connect(self._genome_select_feature)
         self.genome_panel.geneActivated.connect(self._genome_open_gene)
         self.genome_panel.openRegionRequested.connect(self._genome_open_region)
         self.genome_panel.insertionClicked.connect(self._goto_columns)
@@ -1855,6 +1856,17 @@ class MainWindow(QMainWindow):
         if self.model.nrows:
             self.view.set_cursor(self.ref_index(), c0)
             self.view.horizontalScrollBar().setValue(start)
+
+    def _genome_select_feature(self, s: int, e: int):
+        """A gene or exon was clicked in the gene-model view: scroll to it and select its
+        columns across every row, so Copy (FASTA)/Export selection act on just that feature."""
+        proj = self.proj()
+        c0, c1 = proj.span_to_cols(s, max(e, s))
+        vis = self.view._visible_cols()
+        start = max(0, (c0 + c1) // 2 - vis // 2) if c1 - c0 < vis else c0
+        self.view.horizontalScrollBar().setValue(start)
+        if self.model.nrows:
+            self.view.select_region(0, self.model.nrows - 1, c0, max(c0, c1 - 1))
 
     def _translation_regions(self, row: int, c0: int, c1: int):
         """Coding regions for the amino-acid line: annotated CDS on the reference row
