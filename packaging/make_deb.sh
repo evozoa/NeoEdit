@@ -29,7 +29,7 @@ for S in 16 24 32 48 64 128 256; do
   install -Dm644 "$ICONS/neoedit_${S}.png" "$STAGE/usr/share/icons/hicolor/${S}x${S}/apps/neoedit.png"
 done
 
-# Copyright: MIT for NeoEdit, GPL notice for the bundled MAFFT
+# Copyright: MIT for NeoEdit, GPL notices for the bundled MAFFT and IQ-TREE
 DOC="$STAGE/usr/share/doc/neoedit"
 install -d "$DOC"
 {
@@ -40,6 +40,13 @@ install -d "$DOC"
     echo; echo "----------------------------------------------------------------------"; echo
     cat "$HERE/MAFFT-NOTICE.txt"
     [ -f "$MAFFT/copyright" ] && { echo; cat "$MAFFT/copyright"; }
+  fi
+  IQTREE="$APP/_internal/iqtree"
+  if [ -d "$IQTREE" ]; then
+    echo; echo "----------------------------------------------------------------------"; echo
+    cat "$HERE/IQTREE-NOTICE.txt"
+    [ -f "$IQTREE/VERSION.txt" ] && { echo; cat "$IQTREE/VERSION.txt"; }
+    [ -f "$IQTREE/LICENSE" ] && { echo; cat "$IQTREE/LICENSE"; }
   fi
 } > "$DOC/copyright"
 
@@ -63,7 +70,7 @@ Homepage: https://github.com/evozoa/NeoEdit
 Description: Sequence alignment editor and genome viewer (BioEdit-style)
  NeoEdit is a modern, open-source sequence alignment editor inspired by BioEdit:
  FASTA/GenBank/EMBL import, translation, ORF and primer tools, restriction maps,
- NCBI/Ensembl/UCSC import and a genome viewer. MAFFT is bundled for alignment.
+ NCBI/Ensembl/UCSC import and a genome viewer. MAFFT and IQ-TREE are bundled for alignment and trees.
 CONTROL
 
 mkdir -p "$(dirname "$OUT")"

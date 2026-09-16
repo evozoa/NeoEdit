@@ -32,6 +32,7 @@ from .dialogs.misc_dialogs import (FindDialog, StatsDialog, IdentityDialog, Plot
                                    PreferencesDialog, NewSequenceDialog, ConsensusDialog, OriginDialog)
 from .dialogs.common import TextDialog
 from .dialogs.import_dialog import ImportDialog
+from .dialogs.tree_dialogs import IQTreeDialog, NJDialog
 from .. import __version__
 
 FILE_FILTER = ";;".join(
@@ -134,6 +135,9 @@ class MainWindow(QMainWindow):
         self.a_import = A("&Import sequences into current…", self.import_file)
         self.a_import_remote = A("Import from &NCBI / Ensembl / UCSC…", self.import_remote, "Ctrl+Shift+I",
                                  tip="Fetch records from NCBI Entrez, Ensembl (pinned to release 116) or the UCSC Genome Browser by accession, gene, region or search")
+        self.a_ncbi_names = A("NCBI sequence &names…", self.ncbi_names,
+                              tip="Choose which fields (accession, genus, species, isolate, …) make up the "
+                                  "names of sequences imported from NCBI, and their order")
         self.a_save = A("&Save", self.save_file, "Ctrl+S")
         self.a_saveas = A("Save &As…", self.save_file_as, "Ctrl+Shift+S")
         self.a_export_sel = A("Export selected sequences…", self.export_selected)
@@ -258,6 +262,12 @@ class MainWindow(QMainWindow):
 
         # alignment ops
         self.a_align = A("&Align with MAFFT…", self.align_external, "Ctrl+M")
+        self.a_iqtree = A("&Maximum likelihood (IQ-TREE)…", lambda: self._tree_dialog(IQTreeDialog), "Ctrl+Shift+Y",
+                          tip="Maximum-likelihood tree with IQ-TREE 3 (model selection, bootstrap); "
+                              "writes a Newick file for FigTree / iTOL")
+        self.a_nj = A("&Neighbor joining…", lambda: self._tree_dialog(NJDialog),
+                      tip="Neighbor-joining tree from p, JC69, K2P or TN93 distances (Poisson for protein), "
+                          "with bootstrap; writes a Newick file and the distance matrix")
         self.a_rm_gapcols = A("Remove gap-only &columns", self.model_call("remove_gap_only_columns"))
         self.a_pad = A("&Pad sequences to equal length", self.model_call("pad_to_equal_length"))
         self.a_insgapcol = A("Insert gap column at cursor", lambda: self.model.insert_gap_columns(self.view.cur_col, 1), "Ctrl+Space")
@@ -316,7 +326,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self):
         mb = self.menuBar()
         f = mb.addMenu("&File")
-        for a in (self.a_new, self.a_open, self.a_import, self.a_import_remote, None, self.a_save, self.a_saveas, self.a_export_sel, None):
+        for a in (self.a_new, self.a_open, self.a_import, self.a_import_remote, self.a_ncbi_names, None, self.a_save, self.a_saveas, self.a_export_sel, None):
             f.addAction(a) if a else f.addSeparator()
         self.recent_menu = f.addMenu("Open &recent")
         f.addSeparator(); f.addAction(self.a_quit)
@@ -375,6 +385,10 @@ class MainWindow(QMainWindow):
         an = mb.addMenu("A&nalysis")
         for a in (self.a_orf, self.a_primer, self.a_design, self.a_restrict, None, self.a_stats, self.a_ident, self.a_plot):
             an.addAction(a) if a else an.addSeparator()
+        an.addSeparator()
+        self.phylo_menu = an.addMenu("P&hylogeny")
+        self.phylo_menu.addAction(self.a_iqtree)
+        self.phylo_menu.addAction(self.a_nj)
 
         gm = mb.addMenu("&Genome")
         for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_region, self.a_g_circ, self.a_g_goto, self.a_g_openreg, self.a_g_orfclear, None, self.a_g_clear):
@@ -622,12 +636,18 @@ class MainWindow(QMainWindow):
         if path:
             self.import_path(path)
 
-    def import_path(self, path: str) -> int:
-        """Append every sequence in `path` to the current alignment; returns the number added."""
+    def import_path(self, path: str, rename=None) -> int:
+        """Append every sequence in `path` to the current alignment; returns the number added.
+        `rename(record id) -> name or None` renames them on the way in (NCBI name format)."""
         try:
             m = mio.load(path)
         except Exception as e:
             QMessageBox.critical(self, "Import failed", str(e)); return 0
+        if rename is not None:
+            for r in m.rows:
+                new = rename(r.id or r.accession)
+                if new:
+                    r.name = new
         offset = self.model.nrows
         self.model.begin_batch("Import")
         for r in m.rows:
@@ -648,6 +668,13 @@ class MainWindow(QMainWindow):
                         f"genome view: {self.annotation.count()} annotated features")
         self.statusBar().showMessage(msg, 5000)
         return m.nrows
+
+    def ncbi_names(self):
+        from .dialogs.name_format_dialog import NameFormatDialog
+        if NameFormatDialog(self, self.settings).exec():
+            dlg = getattr(self, "_import_dialog", None)
+            if dlg is not None:
+                dlg._show_names()
 
     def import_remote(self):
         """Modeless NCBI / Ensembl importer; every record is added to the current alignment via import_path."""
@@ -1296,6 +1323,15 @@ class MainWindow(QMainWindow):
                 self.model.rows[i].description = r.description
         self.model.end_batch()
         self.statusBar().showMessage(f"MAFFT finished: {len(rows)} sequences aligned", 5000)
+
+    def _tree_dialog(self, cls):
+        if self.model.nrows < 3:
+            QMessageBox.information(self, "Phylogeny", "Need at least three aligned sequences."); return
+        s = self.view.selection()
+        cols = (s[2], s[3] + 1) if s and not self.view.sel_rows and s[3] > s[2] else None
+        d = cls(self, self.settings, self.model, self.view.target_rows(), cols)
+        self._children.append(d)
+        d.show()
 
     def extract_cols(self):
         s = self.view.selection()
@@ -2000,7 +2036,7 @@ Other
   Ctrl+Shift+I import from NCBI / Ensembl / UCSC, Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next,
   Ctrl+Shift+R reverse complement (as in BioEdit; Ctrl+R also works),
   Ctrl+T translation overlay, Ctrl+Shift+T translate, Ctrl+Shift+O ORF finder, Ctrl+Shift+P primer design,
-  Ctrl+Shift+X restriction sites, Ctrl+M align with MAFFT
+  Ctrl+Shift+X restriction sites, Ctrl+M align with MAFFT, Ctrl+Shift+Y maximum-likelihood tree (IQ-TREE)
 """
         TextDialog(self, "Keyboard shortcuts", txt).exec()
 

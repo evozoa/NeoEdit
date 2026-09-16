@@ -274,6 +274,17 @@ def test_gene_model_bars_off_by_default(app):
     w.model.dirty = False; w.close()
 
 
+def test_iqtree_under_analysis_phylogeny(app):
+    from neoedit.ui.main_window import MainWindow
+    w = MainWindow()
+    menus = {m.title().replace("&", ""): m for m in (a.menu() for a in w.menuBar().actions()) if m}
+    phylo = [a.menu() for a in menus["Analysis"].actions() if a.menu()]
+    assert [m.title().replace("&", "") for m in phylo] == ["Phylogeny"]
+    assert phylo[0].actions() == [w.a_iqtree, w.a_nj]
+    assert w.a_iqtree not in menus["Alignment"].actions()
+    w.close()
+
+
 def test_select_to_beginning_then_delete(app):
     """Edit > Select to Beginning / Select to End, then Delete: Edit mode deletes the selected
     residues (also a block within one row); Select/Slide mode only ever removes gaps."""

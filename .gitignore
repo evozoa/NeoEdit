@@ -12,6 +12,7 @@ dist/
 # user data (not distributed)
 *.bio
 packaging/mafft/
+packaging/iqtree/
 
 # Claude Code personal settings
 .claude/settings.local.json
