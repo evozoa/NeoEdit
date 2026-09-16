@@ -68,7 +68,7 @@ def _parse(argv):
     ap.add_argument("--gff", help="annotation (GFF3/GTF/BED) to load with --genome")
     ap.add_argument("--paf", help="synteny PAF to load with --genome")
     ap.add_argument("--self-test", metavar="REPORT.json",
-                    help="check that this installation works (resources, MAFFT, network), "
+                    help="check that this installation works (resources, MAFFT, IQ-TREE, network), "
                          "write a JSON report and exit 0/1")
     # Finder passes -psn_0_NNN to apps it launches; Qt may be given its own flags (-style ...).
     # Never let those kill a windowed build with an argparse SystemExit.
@@ -194,6 +194,27 @@ def self_test(report_path: str) -> int:
             raise RuntimeError(f"MAFFT output not aligned: {lens}")
         return f"{exe} ({ver}); aligned 3 seqs to {lens.pop()} columns"
 
+    def c_iqtree():
+        import tempfile
+        from .analysis import phylo
+        from .model.alignment import SequenceRow
+        exe = phylo.find_iqtree()
+        if not exe:
+            raise RuntimeError("IQ-TREE not found (bundled dir: %s)" % phylo.bundled_tool_dir("iqtree"))
+        ver = phylo.iqtree_version(exe)
+        if phylo.version_problem(ver):
+            raise RuntimeError(f"IQ-TREE at {exe}: {phylo.version_problem(ver)}")
+        rows = [SequenceRow("seq 1", "ATGCATGCATGCAAGGTTCCAAGGTTAACCGG"),
+                SequenceRow("seq 2", "ATGCATGCAAGCAAGGTTCCAAGGTTAACCGA"),
+                SequenceRow("seq 3", "ATGCATGCAAGCAAGGTTCCAAGG--AACCGG"),
+                SequenceRow("seq 4", "ATGGATGCAAGCAAGGTTCCTAGGTTAACCGG")]
+        with tempfile.TemporaryDirectory() as td:
+            run = phylo.prepare_run(rows, os.path.join(td, "run"), "selftest", "dna")
+            res = phylo.run_iqtree(run, exe, timeout=300, model="JC", threads=1, seed=1)
+        if "'seq 4'" not in res.newick:
+            raise RuntimeError(f"unexpected tree: {res.newick}")
+        return f"{exe} (IQ-TREE {ver}); 4-taxon JC tree, logL {res.log_likelihood}"
+
     def c_window():
         import tempfile
         from .ui.main_window import MainWindow
@@ -221,7 +242,7 @@ def self_test(report_path: str) -> int:
 
     for name, fn in [("environment", c_env), ("colour_tables", c_colors), ("icon", c_icon),
                      ("blosum62", c_blosum), ("mdp_peptides", c_peptides), ("formats", c_formats),
-                     ("primer3", c_primer3), ("restriction", c_restriction), ("mafft", c_mafft),
+                     ("primer3", c_primer3), ("restriction", c_restriction), ("mafft", c_mafft), ("iqtree", c_iqtree),
                      ("main_window", c_window), ("https", c_https)]:
         check(name, fn)
 

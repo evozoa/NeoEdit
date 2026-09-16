@@ -21,7 +21,7 @@ Biopython and Primer3.
 The builds are not code-signed, so the first launch needs one extra click — Windows:
 **More info ▸ Run anyway**; Mac: **System Settings ▸ Privacy & Security ▸ Open Anyway**.
 Step-by-step instructions (with what each warning looks like): **[docs/INSTALL.md](docs/INSTALL.md)**.
-MAFFT is bundled.
+MAFFT and IQ-TREE 3 are bundled.
 
 BioEdit is closed-source and frozen; this project recreates the parts people
 actually use, on a codebase that can keep evolving:
@@ -135,6 +135,11 @@ actually use, on a codebase that can keep evolving:
 * **Analysis** – identity matrix, entropy/identity conservation plots, sequence
   statistics, consensus tool, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
   NCBI BLAST launcher.
+* **Trees** – maximum-likelihood trees with IQ-TREE 3 (*Alignment ▸ Build tree with IQ-TREE*):
+  ModelFinder or a chosen model, ultrafast/standard bootstrap and SH-aLRT, optional outgroup,
+  all or selected sequences/columns. Runs in the background with a live log; the result is a
+  Newick file with the real sequence names (plus IQ-TREE's full report) for FigTree, iTOL or R.
+  NeoEdit does not draw trees itself.
 * **Formats** – FASTA, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, EMBL, MSF, plus
   full support for BioEdit's own formats: the binary `.bio` project file is read and
   written byte-for-byte as BioEdit 7 writes it, and GenBank can be read/written in
@@ -147,14 +152,14 @@ pip install -e .            # or: pip install -e ".[dev]" for tests
 neoedit examples/cox1_demo.fasta
 # or
 python -m neoedit
-neoedit --self-test report.json   # checks resources, MAFFT and network access of an installation
+neoedit --self-test report.json   # checks resources, MAFFT, IQ-TREE and network access of an installation
 ```
 
 ### Building the installers
 
 `.github/workflows/build.yml` builds the Windows installer (PyInstaller + Inno Setup), the two
 macOS disk images (PyInstaller, ad-hoc signed) and the Linux `.deb` (PyInstaller on Ubuntu 22.04 +
-`packaging/make_deb.sh`, installs to `/opt/neoedit`) on GitHub's runners, bundling MAFFT, and runs
+`packaging/make_deb.sh`, installs to `/opt/neoedit`) on GitHub's runners, bundling MAFFT and IQ-TREE, and runs
 `NeoEdit --self-test` on each frozen build (and on the installed `.deb`). *Run workflow* on the
 Actions tab produces them as artifacts; pushing a tag `vX.Y.Z` (matching `neoedit.__version__`)
 publishes a release with the four files attached. Locally:
@@ -174,6 +179,8 @@ from the Start Menu entry "NeoEdit (Ubuntu)".
 
 Requires Python ≥ 3.10. MAFFT is optional and found on PATH or set in *Edit ▸ Preferences*
 (`conda install -c bioconda mafft`, `brew install mafft`, or the MAFFT Windows installer).
+IQ-TREE is optional the same way (`iqtree3`, `iqtree2` or `iqtree` on PATH, e.g.
+`conda install -c bioconda iqtree`, or a release from https://iqtree.github.io/).
 
 ## Tests
 

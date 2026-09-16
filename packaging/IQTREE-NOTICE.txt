@@ -1,0 +1,16 @@
+NeoEdit ships an unmodified copy of IQ-TREE 3 so that Alignment > Build tree with IQ-TREE
+works out of the box.
+
+IQ-TREE is a separate program by Bui Quang Minh, Thomas Wong, Nhan Ly-Trong, Huaiyan Ren and
+contributors (https://iqtree.github.io/), distributed under the GNU General Public License,
+version 2 (GPL-2.0). It is not part of NeoEdit (MIT licensed); NeoEdit only runs it as an
+external command. Its license text is in LICENSE in the iqtree/ folder next to this file, and
+its source code is available from https://github.com/iqtree/iqtree3 (the bundled release is
+named in VERSION.txt).
+
+If you publish a tree made with IQ-TREE, please cite it (the .iqtree report lists the papers
+for the methods you used):
+
+  Wong TKF, Ly-Trong N, Ren H, et al., Minh BQ (2026) IQ-TREE 3: Phylogenomic Inference
+  Software using Complex Evolutionary Models. Mol Biol Evol, msag117.
+  https://doi.org/10.1093/molbev/msag117

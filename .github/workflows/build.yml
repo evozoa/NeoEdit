@@ -16,6 +16,10 @@ on:
 env:
   PYTHON_VERSION: "3.12"
   MAFFT_WIN_URL: https://mafft.cbrc.jp/alignment/software/mafft-7.526-win64-signed.zip
+  # IQ-TREE 3 release bundled into every installer (https://github.com/iqtree/iqtree3/releases)
+  IQTREE_VERSION: "3.1.4"
+  IQTREE_URL: https://github.com/iqtree/iqtree3/releases/download
+  IQTREE_LICENSE_URL: https://raw.githubusercontent.com/iqtree/iqtree3
   # What Qt's xcb/offscreen platform plugins load from the system (also the .deb's Depends:)
   QT_APT_LIBS: >-
     libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1 libglib2.0-0
@@ -80,6 +84,20 @@ jobs:
           Copy-Item packaging\MAFFT-NOTICE.txt packaging\mafft\
           if (-not (Test-Path packaging\mafft\mafft.bat)) { throw "mafft.bat not found in the MAFFT package" }
           Get-ChildItem packaging\mafft | Select-Object Name
+      - name: Bundle IQ-TREE (Windows release)
+        shell: pwsh
+        run: |
+          $v = $env:IQTREE_VERSION
+          Invoke-WebRequest -Uri "$env:IQTREE_URL/v$v/iqtree-$v-Windows.zip" -OutFile iqtree-win.zip
+          Expand-Archive -Path iqtree-win.zip -DestinationPath iqtree-tmp
+          New-Item -ItemType Directory -Force packaging\iqtree | Out-Null
+          Copy-Item "iqtree-tmp\iqtree-$v-Windows\bin\iqtree3.exe" packaging\iqtree\
+          Copy-Item "iqtree-tmp\iqtree-$v-Windows\bin\*.dll" packaging\iqtree\
+          Invoke-WebRequest -Uri "$env:IQTREE_LICENSE_URL/v$v/LICENSE" -OutFile packaging\iqtree\LICENSE
+          Copy-Item packaging\IQTREE-NOTICE.txt packaging\iqtree\
+          "IQ-TREE $v (https://github.com/iqtree/iqtree3/releases/tag/v$v)" | Set-Content packaging\iqtree\VERSION.txt
+          & packaging\iqtree\iqtree3.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "bundled iqtree3.exe does not run" }
       - name: PyInstaller
         run: pyinstaller --noconfirm --clean packaging/neoedit.spec
       - name: Self-test the frozen app
@@ -132,13 +150,27 @@ jobs:
           chmod +x packaging/mafft/mafft packaging/mafft/libexec/*
           echo "arch: $(uname -m); binaries: $(file packaging/mafft/libexec/disttbfast | cut -d: -f2)"
           MAFFT_BINARIES="$PWD/packaging/mafft/libexec" packaging/mafft/mafft --version
+      - name: Bundle IQ-TREE (macOS release for this architecture)
+        run: |
+          v="$IQTREE_VERSION"
+          a=$([ "$(uname -m)" = arm64 ] && echo arm || echo intel)
+          curl -fsSL -o iqtree-mac.zip "$IQTREE_URL/v$v/iqtree-$v-macOS-$a.zip"
+          ditto -x -k iqtree-mac.zip iqtree-tmp
+          mkdir -p packaging/iqtree
+          cp "iqtree-tmp/iqtree-$v-macOS-$a/bin/iqtree3" packaging/iqtree/
+          chmod +x packaging/iqtree/iqtree3
+          curl -fsSL -o packaging/iqtree/LICENSE "$IQTREE_LICENSE_URL/v$v/LICENSE"
+          cp packaging/IQTREE-NOTICE.txt packaging/iqtree/
+          echo "IQ-TREE $v (https://github.com/iqtree/iqtree3/releases/tag/v$v)" > packaging/iqtree/VERSION.txt
+          file packaging/iqtree/iqtree3
+          packaging/iqtree/iqtree3 --version | head -1
       - name: PyInstaller
         run: pyinstaller --noconfirm --clean packaging/neoedit.spec
       - name: Ad-hoc sign
         # Unsigned arm64 binaries are refused outright; an ad-hoc signature lets Gatekeeper
-        # offer "Open Anyway" instead. Sign the bundled MAFFT executables, then the app.
+        # offer "Open Anyway" instead. Sign the bundled MAFFT and IQ-TREE executables, then the app.
         run: |
-          find dist/NeoEdit.app -type f -perm +111 -path "*mafft*" -exec codesign --force --sign - {} \;
+          find dist/NeoEdit.app -type f -perm +111 \( -path "*mafft*" -o -path "*iqtree*" \) -exec codesign --force --sign - {} \;
           codesign --force --deep --sign - dist/NeoEdit.app
           codesign --verify --deep --strict --verbose=2 dist/NeoEdit.app
       - name: Self-test the frozen app
@@ -183,6 +215,17 @@ jobs:
           cp packaging/MAFFT-NOTICE.txt packaging/mafft/
           chmod +x packaging/mafft/mafft packaging/mafft/libexec/*
           MAFFT_BINARIES="$PWD/packaging/mafft/libexec" packaging/mafft/mafft --version
+      - name: Bundle IQ-TREE (static Linux x86-64 release)
+        run: |
+          v="$IQTREE_VERSION"
+          curl -fsSL "$IQTREE_URL/v$v/iqtree-$v-Linux-intel.tar.gz" | tar xz
+          mkdir -p packaging/iqtree
+          cp "iqtree-$v-Linux-intel/bin/iqtree3" packaging/iqtree/
+          chmod +x packaging/iqtree/iqtree3
+          curl -fsSL -o packaging/iqtree/LICENSE "$IQTREE_LICENSE_URL/v$v/LICENSE"
+          cp packaging/IQTREE-NOTICE.txt packaging/iqtree/
+          echo "IQ-TREE $v (https://github.com/iqtree/iqtree3/releases/tag/v$v)" > packaging/iqtree/VERSION.txt
+          packaging/iqtree/iqtree3 --version | head -1
       - name: PyInstaller
         run: pyinstaller --noconfirm --clean packaging/neoedit.spec
       - name: Self-test the frozen app
