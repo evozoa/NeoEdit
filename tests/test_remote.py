@@ -353,3 +353,193 @@ def test_live_ucsc():
     cds = [f for f in rec.features if f.type == "CDS" and f.qualifiers["gene"] == ["ND6"]][0]
     aa = str(cds.extract(rec.seq).translate(table=2))
     assert aa.startswith("MMYALF") and aa.endswith("*") and "*" not in aa[:-1]
+
+
+# ---------------------------------------------------------------- NCBI sequence names
+_ESUMMARY_NAMES = {"result": {"uids": ["1", "2", "3"],
+    "1": {"accessionversion": "MT455673.1", "title": "Pimephales promelas voucher USNM:FISH:429789 COI gene",
+          "organism": "Pimephales promelas", "slen": 655, "taxid": 90988, "genome": "mitochondrion",
+          "subtype": "isolate|specimen_voucher|country|collection_date",
+          "subname": "SERCFISH0714|USNM:FISH:429789|USA: Maryland, Patuxent River|20-May-2013"},
+    "2": {"accessionversion": "KX353935.1", "title": "Prunus necrotic ringspot virus isolate SHN-40",
+          "organism": "Prunus necrotic ringspot virus", "slen": 675, "genome": "genomic",
+          "subtype": "isolate|host|country", "subname": "SHN-40|nectarine|Iran"},
+    "3": {"accessionversion": "OQ000001.1", "title": "Mus musculus",
+          "organism": "Mus musculus domesticus", "slen": 10, "subtype": "strain|bad", "subname": "C57"}}}
+
+
+def test_ncbi_name_fields_and_format():
+    assert N.parse_source("isolate|country", "X1|Peru") == {"isolate": "X1", "country": "Peru"}
+    assert N.parse_source("strain|bad", "C57") == {}                  # mismatched lists are ignored
+    assert N.parse_source("", "") == {}
+    fish, virus = (N.Summary("u", a, t, 1, o, source=src, genome=g) for a, t, o, src, g in (
+        ("MT455673.1", "Pimephales promelas voucher", "Pimephales promelas",
+         {"isolate": "SERCFISH0714", "specimen_voucher": "USNM:FISH:429789",
+          "country": "USA: Maryland, Patuxent River", "note": "ignored"}, "mitochondrion"),
+        ("KX353935.1", "Prunus necrotic ringspot virus isolate SHN-40", "Prunus necrotic ringspot virus",
+         {"isolate": "SHN-40", "geo_loc_name": "Iran: Tehran"}, "genomic")))
+    f = N.name_fields(fish)
+    assert (f["genus"], f["species"], f["country"], f["location"], f["genome"]) == \
+        ("Pimephales", "promelas", "USA", "USA: Maryland, Patuxent River", "mitochondrion")
+    assert "note" not in f and f["accession_base"] == "MT455673"
+    v = N.name_fields(virus, "KX353935.1:1-100")
+    assert (v["genus"], v["species"], v["country"], v["genome"]) == ("", "", "Iran", "")   # not a binomial
+    assert (v["accession"], v["accession_base"]) == ("KX353935.1:1-100", "KX353935:1-100")
+    assert N.format_name(f, ["genus", "species", "specimen_voucher", "accession"]) == \
+        "Pimephales promelas USNM:FISH:429789 MT455673.1"
+    assert N.format_name(f, ["genus", "species", "haplotype", "isolate"], "_") == "Pimephales_promelas_SERCFISH0714"
+    assert N.format_name(f, ["organism", "country"], "_", spaces=True) == "Pimephales_promelas_USA"
+    assert N.format_name(f, ["organism", "accession"], "|") == "Pimephales promelas|MT455673.1"
+    assert N.format_name(v, ["genus", "strain"]) == "KX353935.1:1-100"          # nothing left: accession
+    assert N.format_name(f, N.DEFAULT_NAME_FIELDS) == "MT455673.1 Pimephales promelas voucher"
+    assert {k for k, _ in N.NAME_FIELDS} >= {"accession", "genus", "species", "isolate", "specimen_voucher"}
+
+
+def test_ncbi_namer_offline():
+    ff = FakeFetch([("esummary.fcgi", json.dumps(_ESUMMARY_NAMES))])
+    c = N.NCBIClient(fetch=ff)
+    c._throttle = lambda: None
+    name = c.namer("nuccore", ["MT455673", "KX353935.1", "OQ000001.1"], ["genus", "species", "isolate", "accession"], "_")
+    assert "esummary" in ff.urls[-1]
+    assert name("MT455673.1") == "Pimephales_promelas_SERCFISH0714_MT455673.1"
+    assert name("MT455673") == "Pimephales_promelas_SERCFISH0714_MT455673"      # the id as the file has it
+    assert name("KX353935.1:c100-1") == "SHN-40_KX353935.1:c100-1"               # sub-range keeps its suffix
+    assert name("OQ000001.1") == "Mus_musculus_OQ000001.1"
+    assert name("ZZ999999.1") is None
+
+
+def _qapp():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    import sys
+    from PySide6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication(sys.argv)
+
+
+def test_name_format_dialog(tmp_path):
+    _qapp()
+    from PySide6.QtCore import QSettings, Qt, QPointF
+    from PySide6.QtTest import QTest
+    from neoedit.ui.dialogs import name_format_dialog as NF
+    s = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    assert NF.name_settings(s) == (N.DEFAULT_NAME_FIELDS, " ", False)
+    d = NF.NameFormatDialog(None, s)
+    all_keys = [k for k, _ in N.NAME_FIELDS]
+    assert d.chosen.keys() == ["accession", "title"]
+    assert d.available.keys() == [k for k in all_keys if k not in ("accession", "title")]
+    assert d.preview.text().splitlines()[0].startswith("MT455673.1 Pimephales promelas voucher")
+
+    def select(lst, *keys):
+        lst.clearSelection()
+        for i in range(lst.count()):
+            lst.item(i).setSelected(lst.item(i).data(NF.KEY_ROLE) in keys)
+
+    select(d.chosen, "title"); d.remove_selected()
+    select(d.available, "genus", "species"); d.add_selected()        # added in the list's order
+    assert d.chosen.keys() == ["accession", "genus", "species"]
+    select(d.chosen, "accession"); d.move_selected(1); d.move_selected(1); d.move_selected(1)
+    assert d.chosen.keys() == ["genus", "species", "accession"]
+    assert "title" in d.available.keys() and "genus" not in d.available.keys()
+    assert d.available.keys() == [k for k in all_keys if k not in d.chosen.keys()]   # canonical order
+
+    # drops, as the list widgets report them: where on the target decides the insert position
+    d.resize(700, 560); d.show(); QTest.qWait(20)
+
+    class Drop:                          # the parts of QDropEvent the lists use
+        def __init__(self, source, point):
+            self._s, self._p, self.accepted, self.action = source, point, None, None
+        def source(self): return self._s
+        def position(self): return self._p
+        def setDropAction(self, a): self.action = a
+        def accept(self): self.accepted = True
+        def ignore(self): self.accepted = False
+
+    def drop(src, dst, keys, row_or_end):
+        select(src, *keys)
+        if row_or_end is None:                                         # empty space below the items
+            pt = QPointF(5, dst.viewport().height() - 2)
+        else:                                                          # upper half of that row
+            r = dst.visualRect(dst.model().index(row_or_end, 0))
+            pt = QPointF(r.center().x(), r.top() + 1)
+        ev = Drop(src, pt)
+        dst.dropEvent(ev)
+        assert ev.accepted and ev.action == Qt.CopyAction              # the source never deletes on its own
+        QTest.qWait(20)
+
+    drop(d.available, d.chosen, ["specimen_voucher"], 1)               # between genus and species
+    assert d.chosen.keys() == ["genus", "specimen_voucher", "species", "accession"]
+    assert "specimen_voucher" not in d.available.keys()
+    drop(d.chosen, d.chosen, ["accession"], 0)                          # reorder within the list
+    assert d.chosen.keys() == ["accession", "genus", "specimen_voucher", "species"]
+    drop(d.chosen, d.chosen, ["accession", "genus"], None)              # two at once, to the end
+    assert d.chosen.keys() == ["specimen_voucher", "species", "accession", "genus"]
+    drop(d.chosen, d.available, ["specimen_voucher"], 0)                # back: canonical place
+    assert d.chosen.keys() == ["species", "accession", "genus"]
+    assert d.available.keys() == [k for k in all_keys if k not in d.chosen.keys()]
+    other = Drop(object(), QPointF(1, 1)); d.chosen.dropEvent(other)    # drags from elsewhere are refused
+    assert other.accepted is False
+    select(d.chosen, "genus"); d.move_selected(-1); d.move_selected(-1)
+    assert d.chosen.keys() == ["genus", "species", "accession"]
+
+    d.sep.setCurrentIndex(d.sep.findData("_"))
+    assert d.preview.text().splitlines()[0] == "Pimephales_promelas_MT455673.1"
+    assert d.preview.text().splitlines()[2] == "KX353935.1"                     # a virus: no genus/species
+    d.accept()
+    assert NF.name_settings(s) == (["genus", "species", "accession"], "_", False)
+    assert NF.describe(*NF.name_settings(s)[:2]) == "Genus _ Species (epithet) _ Accession.version"
+    d2 = NF.NameFormatDialog(None, s)
+    assert d2.chosen.keys() == ["genus", "species", "accession"]
+    d2.restore_default()
+    assert d2.values() == (N.DEFAULT_NAME_FIELDS, " ", False)
+    assert NF.is_default(*d2.values()[:2])
+
+
+def test_import_renames_ncbi_records(tmp_path):
+    _qapp()
+    from neoedit.ui.main_window import MainWindow
+    from neoedit.ui.dialogs.name_format_dialog import SETTING_FIELDS, SETTING_SEP
+    w = MainWindow()
+    w.import_remote()
+    dlg = w._import_dialog
+    dlg.dir_edit.setText(str(tmp_path))
+    fasta = (">MT455673.1 Pimephales promelas voucher USNM:FISH:429789 COI gene\nACGTACGT\n"
+             ">KX353935.1:1-8 Prunus necrotic ringspot virus isolate SHN-40\nACGTACGA\n")
+    ff = FakeFetch([("efetch.fcgi", fasta), ("esummary.fcgi", json.dumps(_ESUMMARY_NAMES))])
+    client = N.NCBIClient(fetch=ff)
+    client._throttle = lambda: None
+    dlg._ncbi_client = lambda: client
+    dlg.n_fmt.setCurrentIndex(dlg.n_fmt.findData("fasta"))
+    dlg.n_ids.setPlainText("MT455673.1 KX353935.1")
+    # default names: no extra request, NCBI's header is kept
+    job, _ = dlg._ncbi_job()
+    path, msg, rename = job()
+    assert rename is None and not any("esummary" in u for u in ff.urls)
+    dlg._fetched((path, msg, rename))
+    assert [r.name for r in w.model.rows] == ["MT455673.1 Pimephales promelas voucher USNM:FISH:429789 COI gene",
+                                             "KX353935.1:1-8 Prunus necrotic ringspot virus isolate SHN-40"]
+    # custom names
+    w.settings.setValue(SETTING_FIELDS, "genus,species,isolate,accession")
+    w.settings.setValue(SETTING_SEP, "_")
+    dlg._show_names()
+    assert dlg.n_names.text() == "Genus _ Species (epithet) _ Isolate _ Accession.version"
+    dlg.show()
+    dlg.n_ids.setPlainText("MT455673.1 KX353935.1")
+    job, _ = dlg._ncbi_job()
+    res = job()
+    assert res[2] is not None
+    dlg._fetched(res)
+    assert [r.name for r in w.model.rows[2:]] == ["Pimephales_promelas_SERCFISH0714_MT455673.1",
+                                                 "SHN-40_KX353935.1:1-8"]
+    assert w.model.rows[2].accession == "MT455673.1"          # the record id is untouched
+    # details unavailable: the import still works with NCBI's names
+    ff.routes[1] = ("esummary.fcgi", RemoteError("HTTP 503"))
+    dlg.show()
+    dlg.n_ids.setPlainText("MT455673.1")
+    job, _ = dlg._ncbi_job()
+    path, msg, rename = job()
+    assert rename is None and "kept NCBI's names" in msg
+    for k in (SETTING_FIELDS, SETTING_SEP):
+        w.settings.remove(k)
+    w.model.dirty = False
+    dlg.close()
+    w.close()

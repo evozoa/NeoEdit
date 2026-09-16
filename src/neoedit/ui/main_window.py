@@ -134,6 +134,9 @@ class MainWindow(QMainWindow):
         self.a_import = A("&Import sequences into current…", self.import_file)
         self.a_import_remote = A("Import from &NCBI / Ensembl / UCSC…", self.import_remote, "Ctrl+Shift+I",
                                  tip="Fetch records from NCBI Entrez, Ensembl (pinned to release 116) or the UCSC Genome Browser by accession, gene, region or search")
+        self.a_ncbi_names = A("NCBI sequence &names…", self.ncbi_names,
+                              tip="Choose which fields (accession, genus, species, isolate, …) make up the "
+                                  "names of sequences imported from NCBI, and their order")
         self.a_save = A("&Save", self.save_file, "Ctrl+S")
         self.a_saveas = A("Save &As…", self.save_file_as, "Ctrl+Shift+S")
         self.a_export_sel = A("Export selected sequences…", self.export_selected)
@@ -316,7 +319,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self):
         mb = self.menuBar()
         f = mb.addMenu("&File")
-        for a in (self.a_new, self.a_open, self.a_import, self.a_import_remote, None, self.a_save, self.a_saveas, self.a_export_sel, None):
+        for a in (self.a_new, self.a_open, self.a_import, self.a_import_remote, self.a_ncbi_names, None, self.a_save, self.a_saveas, self.a_export_sel, None):
             f.addAction(a) if a else f.addSeparator()
         self.recent_menu = f.addMenu("Open &recent")
         f.addSeparator(); f.addAction(self.a_quit)
@@ -622,12 +625,18 @@ class MainWindow(QMainWindow):
         if path:
             self.import_path(path)
 
-    def import_path(self, path: str) -> int:
-        """Append every sequence in `path` to the current alignment; returns the number added."""
+    def import_path(self, path: str, rename=None) -> int:
+        """Append every sequence in `path` to the current alignment; returns the number added.
+        `rename(record id) -> name or None` renames them on the way in (NCBI name format)."""
         try:
             m = mio.load(path)
         except Exception as e:
             QMessageBox.critical(self, "Import failed", str(e)); return 0
+        if rename is not None:
+            for r in m.rows:
+                new = rename(r.id or r.accession)
+                if new:
+                    r.name = new
         offset = self.model.nrows
         self.model.begin_batch("Import")
         for r in m.rows:
@@ -648,6 +657,13 @@ class MainWindow(QMainWindow):
                         f"genome view: {self.annotation.count()} annotated features")
         self.statusBar().showMessage(msg, 5000)
         return m.nrows
+
+    def ncbi_names(self):
+        from .dialogs.name_format_dialog import NameFormatDialog
+        if NameFormatDialog(self, self.settings).exec():
+            dlg = getattr(self, "_import_dialog", None)
+            if dlg is not None:
+                dlg._show_names()
 
     def import_remote(self):
         """Modeless NCBI / Ensembl importer; every record is added to the current alignment via import_path."""

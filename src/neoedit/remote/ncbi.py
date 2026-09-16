@@ -20,6 +20,40 @@ _RETTYPE = {("nuccore", "gb"): "gbwithparts", ("nuccore", "fasta"): "fasta",
             ("protein", "gb"): "gp", ("protein", "fasta"): "fasta"}
 _EXT = {"gb": ".gb", "fasta": ".fasta"}
 
+# Fields an imported sequence can be named from (key, label). All come from esummary: the
+# organism, title and length, plus the record's source qualifiers (isolate, voucher, ...).
+NAME_FIELDS = [
+    ("accession", "Accession.version"),
+    ("accession_base", "Accession (no version)"),
+    ("organism", "Organism (full name)"),
+    ("genus", "Genus"),
+    ("species", "Species (epithet)"),
+    ("isolate", "Isolate"),
+    ("strain", "Strain"),
+    ("specimen_voucher", "Specimen voucher"),
+    ("clone", "Clone"),
+    ("haplotype", "Haplotype"),
+    ("cultivar", "Cultivar"),
+    ("serotype", "Serotype"),
+    ("segment", "Segment"),
+    ("host", "Host"),
+    ("country", "Country"),
+    ("location", "Location (full)"),
+    ("lat_lon", "Latitude / longitude"),
+    ("collection_date", "Collection date"),
+    ("collected_by", "Collected by"),
+    ("genome", "Organelle / genome"),
+    ("length", "Length"),
+    ("taxid", "Taxonomy ID"),
+    ("title", "Definition line (title)"),
+]
+NAME_LABELS = dict(NAME_FIELDS)
+# NCBI's own header: what NeoEdit shows when nothing is customised
+DEFAULT_NAME_FIELDS = ["accession", "title"]
+NAME_SEPARATORS = [("Space", " "), ("Underscore  _", "_"), ("Pipe  |", "|"), ("Hyphen  -", "-")]
+_SOURCE_KEYS = {"isolate", "strain", "specimen_voucher", "clone", "haplotype", "cultivar", "serotype",
+                "segment", "host", "lat_lon", "collection_date", "collected_by"}
+
 
 @dataclass
 class Summary:
@@ -31,6 +65,9 @@ class Summary:
     moltype: str = ""
     topology: str = ""
     extra: dict = field(default_factory=dict)
+    source: dict = field(default_factory=dict)     # source qualifiers: {"isolate": "...", ...}
+    taxid: str = ""
+    genome: str = ""                               # "mitochondrion", "chloroplast", "genomic", ...
 
 
 def parse_ids(text: str) -> list[str]:
@@ -107,8 +144,26 @@ class NCBIClient:
                                    organism=r.get("organism", ""), moltype=r.get("moltype", ""),
                                    topology=r.get("topology", ""),
                                    extra={k: r[k] for k in ("biomol", "sourcedb", "completeness", "geneticcode", "updatedate")
-                                          if k in r}))
+                                          if k in r},
+                                   source=parse_source(r.get("subtype", ""), r.get("subname", "")),
+                                   taxid=str(r.get("taxid") or ""), genome=r.get("genome", "")))
         return out
+
+    def namer(self, db: str, ids: list[str], fields: list[str], sep: str = " ",
+              spaces: bool = False):
+        """A function record id -> sequence name built from `fields` (see `format_name`), from
+        the esummaries of `ids`; it returns None for records it has no summary for."""
+        by_acc: dict[str, Summary] = {}
+        for s in self.summaries(db, ids):
+            by_acc[s.accession] = s
+            by_acc.setdefault(s.accession.split(".")[0], s)
+            by_acc.setdefault(s.uid, s)
+
+        def name(record_id: str) -> str | None:
+            key = record_id.split(":")[0]
+            s = by_acc.get(key) or by_acc.get(key.split(".")[0])
+            return format_name(name_fields(s, record_id), fields, sep, spaces) if s else None
+        return name
 
     def fetch(self, db: str, ids: list[str], fmt: str = "gb", seq_start: int | None = None,
               seq_stop: int | None = None, strand: int | None = None) -> str:
@@ -140,6 +195,58 @@ class NCBIClient:
             stem += f"_{rng[0] or 1}-{rng[1] or 'end'}"
         path = write_download(text, out_dir, stem, _EXT[fmt])
         return path, text
+
+
+def parse_source(subtype: str, subname: str) -> dict:
+    """esummary's parallel "subtype"/"subname" lists ("isolate|country", "X1|Peru") -> dict."""
+    keys = [k.strip() for k in (subtype or "").split("|")]
+    vals = [v.strip() for v in (subname or "").split("|")]
+    if not subtype or len(keys) != len(vals):
+        return {}
+    return {k: v for k, v in zip(keys, vals) if k and v}
+
+
+def name_fields(s: Summary, record_id: str = "") -> dict[str, str]:
+    """The NAME_FIELDS values of one record. `record_id` (the id in the downloaded file) wins over
+    the summary's accession, so a sub-range keeps its ":577-647" suffix."""
+    acc = record_id or s.accession
+    org = " ".join(s.organism.split())
+    words = org.split()
+    genus = species = ""
+    # a Latin binomial ("Pimephales promelas", "Pimephales sp."), not "Severe acute respiratory ..."
+    if (len(words) >= 2 and words[0][:1].isupper() and words[0].isalpha() and words[1].islower()
+            and "virus" not in org.lower() and "phage" not in org.lower()):
+        genus, species = words[0], words[1]
+    location = s.source.get("geo_loc_name") or s.source.get("country", "")
+    f = {
+        "accession": acc,
+        "accession_base": re.sub(r"\.\d+", "", acc, count=1),
+        "organism": org,
+        "genus": genus,
+        "species": species,
+        "country": location.split(":")[0].strip(),
+        "location": location,
+        "genome": s.genome if s.genome not in ("", "genomic") else "",
+        "length": str(s.length) if s.length else "",
+        "taxid": s.taxid,
+        "title": s.title,
+    }
+    f.update({k: v for k, v in s.source.items() if k in _SOURCE_KEYS})
+    return f
+
+
+def format_name(values: dict[str, str], fields: list[str], sep: str = " ", spaces: bool = False) -> str:
+    """Join the `fields` that have a value, in order. `spaces`: also replace whitespace inside the
+    values with `sep`. Falls back to the accession when nothing is left."""
+    parts = []
+    for k in fields:
+        v = " ".join((values.get(k) or "").split())
+        if not v:
+            continue
+        if spaces and sep.strip():
+            v = v.replace(" ", sep)
+        parts.append(v)
+    return (sep or " ").join(parts) or values.get("accession", "")
 
 
 def _unspace(msg: str) -> str:

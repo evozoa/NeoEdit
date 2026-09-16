@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, Q
 
 from ...remote import RemoteError, ncbi as N, ensembl as E, ucsc as U
 from .common import NumItem
+from .name_format_dialog import NameFormatDialog, name_settings, is_default, describe
 
 
 class _Worker(QThread):
@@ -55,6 +56,7 @@ class ImportDialog(QDialog):
         self._ens_client: E.EnsemblClient | None = None
         self._ucsc_client = U.UCSCClient()
         self._genomes: list[U.Genome] = []
+        self._n_summaries: list[N.Summary] = []
 
         lay = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -112,6 +114,16 @@ class ImportDialog(QDialog):
             rng.addWidget(x)
         rng.addStretch(1)
         form.addRow("Sub-range (single accession)", rng)
+        names = QHBoxLayout()
+        self.n_names = QLabel("")
+        self.n_names.setWordWrap(True)
+        self.b_names = QPushButton("Sequence names…")
+        self.b_names.setToolTip("Choose which fields (accession, genus, species, isolate, voucher, …) "
+                                "make up the names of imported sequences, and their order")
+        self.b_names.clicked.connect(self.edit_names)
+        names.addWidget(self.n_names, 1); names.addWidget(self.b_names)
+        form.addRow("Names", names)
+        self._show_names()
         lay.addLayout(form)
 
         grp = QGroupBox("Search Entrez")
@@ -151,6 +163,16 @@ class ImportDialog(QDialog):
         lay.addLayout(ident)
         return w
 
+    def _show_names(self):
+        fields, sep, _ = name_settings(self.settings)
+        self.n_names.setText(describe(fields, sep))
+
+    def edit_names(self):
+        checked = set(self._checked_accessions())
+        samples = sorted(self._n_summaries, key=lambda s: s.accession not in checked)   # ticked records first
+        if NameFormatDialog(self, self.settings, samples).exec():
+            self._show_names()
+
     def _check_all(self, on: bool):
         for r in range(self.n_table.rowCount()):
             self.n_table.item(r, 0).setCheckState(Qt.Checked if on else Qt.Unchecked)
@@ -174,6 +196,7 @@ class ImportDialog(QDialog):
 
     def _ncbi_search_done(self, res):
         count, sums = res
+        self._n_summaries = list(sums)
         t = self.n_table
         t.setSortingEnabled(False); t.setRowCount(0)
         for s in sums:
@@ -215,11 +238,19 @@ class ImportDialog(QDialog):
                 kw["strand"] = 2
         client = self._ncbi_client()
         out_dir = self._out_dir()
+        fields, sep, spaces = name_settings(self.settings)
 
         def job():
             path, text = client.download(db, ids, fmt, out_dir, **kw)
             n = N.count_records(text, fmt)
-            return path, f"NCBI {db}: {n} record(s) → {path}"
+            msg = f"NCBI {db}: {n} record(s) → {path}"
+            rename = None
+            if not is_default(fields, sep):
+                try:
+                    rename = client.namer(db, ids, fields, sep, spaces)
+                except RemoteError as e:
+                    msg += f"  (kept NCBI's names: could not get the record details — {e})"
+            return path, msg, rename
         return job, f"Fetching {len(ids)} record(s) from NCBI {db}…"
 
     # ------------------------------------------------------------ Ensembl tab
@@ -637,10 +668,14 @@ class ImportDialog(QDialog):
         self._run(job, self._fetched, busy)
 
     def _fetched(self, res):
-        path, msg = res
+        path, msg, *rest = res
+        rename = rest[0] if rest else None
         self.status.setText(msg)
         try:
-            self.on_add(path)
+            if rename is not None:
+                self.on_add(path, rename=rename)
+            else:
+                self.on_add(path)
         except Exception as e:   # noqa: BLE001
             QMessageBox.critical(self, "Import", f"Downloaded to {path}, but it could not be opened:\n{e}")
             return

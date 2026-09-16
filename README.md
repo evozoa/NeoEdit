@@ -108,7 +108,11 @@ actually use, on a codebase that can keep evolving:
   fit the longest title, or use View ▸ Fit name column / automatic width; the width is remembered.
 * **Import from NCBI, Ensembl and UCSC** (`Ctrl+Shift+I`) – add GenBank/FASTA records from
   NCBI Entrez by accession/GI (with sub-range and strand) or by searching Entrez and
-  ticking hits; fetch genes (symbol or stable ID), regions, cDNA/CDS/protein from the
+  ticking hits. **Sequence names…** (also *File ▸ NCBI sequence names…*) sets what NCBI
+  sequences are called: drag fields such as accession, genus, species, isolate, specimen
+  voucher, country or collection date into the order you want, with a separator of your
+  choice (e.g. `Pimephales_promelas_USNM:FISH:429789_MT455673.1`); the default is NCBI's own
+  header. Fetch genes (symbol or stable ID), regions, cDNA/CDS/protein from the
   Ensembl REST API **pinned to release 116** (archive server first, live server as
   fallback, with the actual release shown). Ensembl genomic imports are written as GenBank
   with gene / mRNA / tRNA / rRNA / CDS features built from Ensembl's gene models, so the
