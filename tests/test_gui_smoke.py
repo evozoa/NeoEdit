@@ -283,3 +283,70 @@ def test_iqtree_under_analysis_phylogeny(app):
     assert phylo[0].actions() == [w.a_iqtree, w.a_nj]
     assert w.a_iqtree not in menus["Alignment"].actions()
     w.close()
+
+
+def test_select_to_beginning_then_delete(app):
+    """Edit > Select to Beginning / Select to End, then Delete: Edit mode deletes the selected
+    residues (also a block within one row); Select/Slide mode only ever removes gaps."""
+    from neoedit.ui.main_window import MainWindow
+    from neoedit.model.alignment import AlignmentModel, SequenceRow
+    w = MainWindow()
+    w.show()
+    w._set_model(AlignmentModel([SequenceRow("a", "ACGTACGTAC"), SequenceRow("b", "--GTAC--AC"),
+                                 SequenceRow("c", "TTTTTTTTTT")]))
+    assert w.a_sel_start.text().replace("&", "") == "Select to Beginning"
+    assert w.a_sel_end.text().replace("&", "") == "Select to End"
+    v, m = w.view, w.model
+    w.activateWindow(); v.setFocus(); app.processEvents()
+
+    def key(k, mods=Qt.NoModifier):
+        QTest.keyClick(v, k, mods); app.processEvents()
+
+    # Edit mode, insert caret before column 4: residues 0-3 are selected and deleted
+    w._set_mode("edit"); v.set_edit_submode("insert")
+    v.set_cursor(0, 4)
+    w.a_sel_start.trigger()
+    assert v.selection() == (0, 0, 0, 3)
+    key(Qt.Key_Delete)
+    assert m.rows[0].seq == "ACGTAC" and v.selection() is None and (v.cur_row, v.cur_col) == (0, 0)
+    m.undo()
+    assert m.rows[0].seq == "ACGTACGTAC"
+    # caret at the very start: nothing to select, nothing deleted
+    v.set_cursor(0, 0)
+    w.a_sel_start.trigger()
+    assert v.selection() is None
+    # overwrite mode: the box cursor's own residue is part of the selection; Backspace works too
+    v.set_edit_submode("overwrite")
+    v.set_cursor(0, 4)
+    key(Qt.Key_Home, Qt.ShiftModifier)
+    assert v.selection() == (0, 0, 0, 4)
+    key(Qt.Key_Backspace)
+    assert m.rows[0].seq == "CGTAC"
+    m.undo()
+    # Select to End, then Delete, clears the rest of the row
+    v.set_cursor(2, 6)
+    w.a_sel_end.trigger()
+    assert v.selection() == (2, 2, 6, 9)
+    key(Qt.Key_Delete)
+    assert m.rows[2].seq == "TTTTTT"
+    m.undo()
+    # a block over several rows is deleted from each of them, as one undo step
+    v.select_region(0, 1, 2, 3)
+    key(Qt.Key_Delete)
+    assert [r.seq for r in m.rows[:2]] == ["ACACGTAC", "--AC--AC"]
+    m.undo()
+    assert [r.seq for r in m.rows[:2]] == ["ACGTACGTAC", "--GTAC--AC"]
+
+    # Select/Slide mode: residues stay, only gaps at the start of the block go
+    w._set_mode("slide")
+    v.set_cursor(1, 3)
+    w.a_sel_start.trigger()
+    assert v.selection() == (1, 1, 0, 3)
+    key(Qt.Key_Delete)
+    assert m.rows[1].seq == "GTAC--AC"
+    v.set_cursor(0, 5)
+    w.a_sel_start.trigger()
+    key(Qt.Key_Delete)
+    assert m.rows[0].seq == "ACGTACGTAC"
+    m.dirty = False
+    w.close()

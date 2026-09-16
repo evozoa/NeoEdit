@@ -355,18 +355,34 @@ class AlignmentView(QAbstractScrollArea):
 
     def select_to_start(self):
         """Extend the selection back to column 0 of the current row (BioEdit: Edit -> Select
-        to Beginning of Sequence; same as Shift+Home)."""
+        to Beginning; same as Shift+Home). With the insert caret, which sits *before* the
+        cursor column, the selection stops at the residue left of the caret."""
         if not self.model.nrows:
             return
+        if self.anchor is None and not self.sel_rows and self.typing == "insert":
+            if self.cur_col == 0:
+                return
+            self.anchor = (self.cur_row, self.cur_col - 1)
         self.set_cursor(self.cur_row, 0, extend=True)
 
     def select_to_end(self):
         """Extend the selection to the last residue of the current row's own sequence (BioEdit:
-        Edit -> Select to End of Sequence; same as Shift+End)."""
+        Edit -> Select to End; same as Shift+End)."""
         if not self.model.nrows:
             return
         end_col = max(0, len(self.model.rows[self.cur_row].seq) - 1)
         self.set_cursor(self.cur_row, end_col, extend=True)
+
+    def delete_block(self, sel):
+        """Delete the residues in the (row0, row1, col0, col1) block from each of its rows and
+        leave the cursor where the block began."""
+        r0, r1, c0, c1 = sel
+        m = self.model
+        m.begin_batch("Delete selection")
+        for row in range(r0, r1 + 1):
+            m.delete_range(row, c0, c1 - c0 + 1)
+        m.end_batch()
+        self.set_cursor(r0, c0)
 
     def clear_selection(self):
         self.anchor = None
@@ -1000,6 +1016,14 @@ class AlignmentView(QAbstractScrollArea):
         rows = self.target_rows()
         sel = self.selection()
         multi = sel is not None and (sel[0] != sel[1] or bool(self.sel_rows))
+        # a residue block (one row or several) rather than whole sequences picked by title
+        block = sel is not None and not self.sel_rows and (sel[0] != sel[1] or sel[2] != sel[3])
+
+        if k in (Qt.Key_Delete, Qt.Key_Backspace) and block and self.typing is not None and not ctrl:
+            # Edit mode: Delete / Backspace remove the selected residues (BioEdit deletes residues
+            # only in Edit mode); the rest of each sequence moves left
+            self.delete_block(sel)
+            return
 
         if k == Qt.Key_Left:
             self.set_cursor(r, max(0, c - (10 if ctrl else 1)), shift); return
@@ -1010,9 +1034,17 @@ class AlignmentView(QAbstractScrollArea):
         if k == Qt.Key_Down:
             self.set_cursor(r + 1, c, shift); return
         if k == Qt.Key_Home:
-            self.set_cursor(0 if ctrl else r, 0, shift); return
+            if shift and not ctrl:
+                self.select_to_start()
+            else:
+                self.set_cursor(0 if ctrl else r, 0, shift)
+            return
         if k == Qt.Key_End:
-            self.set_cursor(m.nrows - 1 if ctrl else r, max(0, len(m.rows[r].seq) - 1) if not ctrl else m.width - 1, shift); return
+            if shift and not ctrl:
+                self.select_to_end()
+            else:
+                self.set_cursor(m.nrows - 1 if ctrl else r, max(0, len(m.rows[r].seq) - 1) if not ctrl else m.width - 1, shift)
+            return
         if k == Qt.Key_PageDown:
             self.set_cursor(r + self._visible_rows(), c, shift); return
         if k == Qt.Key_PageUp:
@@ -1041,7 +1073,7 @@ class AlignmentView(QAbstractScrollArea):
         if k == Qt.Key_Delete:
             if ctrl:
                 m.delete_gap_columns(c, 1)
-            elif multi and not self.sel_rows:
+            elif block:
                 # delete selected gap columns in selected rows
                 m.begin_batch("Delete gaps")
                 for _ in range(sel[3] - sel[2] + 1):
