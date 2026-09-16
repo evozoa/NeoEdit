@@ -135,11 +135,14 @@ actually use, on a codebase that can keep evolving:
 * **Analysis** – identity matrix, entropy/identity conservation plots, sequence
   statistics, consensus tool, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
   NCBI BLAST launcher.
-* **Trees** – maximum-likelihood trees with IQ-TREE 3 (*Analysis ▸ Phylogeny ▸ Build tree with IQ-TREE*):
-  ModelFinder or a chosen model, ultrafast/standard bootstrap and SH-aLRT, optional outgroup,
-  all or selected sequences/columns. Runs in the background with a live log; the result is a
-  Newick file with the real sequence names (plus IQ-TREE's full report) for FigTree, iTOL or R.
-  NeoEdit does not draw trees itself.
+* **Trees** (*Analysis ▸ Phylogeny*) – all or selected sequences/columns, optional outgroup;
+  runs in the background and writes a Newick file with the real sequence names for FigTree,
+  iTOL or R (NeoEdit does not draw trees itself).
+  * *Maximum likelihood* with IQ-TREE 3 (bundled): ModelFinder or a chosen model,
+    ultrafast/standard bootstrap and SH-aLRT, live log and IQ-TREE's full report.
+  * *Neighbor joining*, computed by NeoEdit: p-distance, Jukes–Cantor, Kimura 2-parameter or
+    Tamura–Nei (p or Poisson for protein), pairwise or complete deletion of gaps/ambiguities,
+    bootstrap; also writes the distance matrix (CSV). Distances match R's `ape::dist.dna`.
 * **Formats** – FASTA, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, EMBL, MSF, plus
   full support for BioEdit's own formats: the binary `.bio` project file is read and
   written byte-for-byte as BioEdit 7 writes it, and GenBank can be read/written in

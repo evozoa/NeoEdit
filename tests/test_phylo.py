@@ -105,7 +105,7 @@ def test_dialog_runs_iqtree(tmp_path):
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
     from neoedit.model import io as mio
-    from neoedit.ui.dialogs.iqtree_dialog import IQTreeDialog
+    from neoedit.ui.dialogs.tree_dialogs import IQTreeDialog
     QApplication.instance() or QApplication(sys.argv)
     settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
     model = mio.load(EXAMPLE)

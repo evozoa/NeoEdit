@@ -1,5 +1,5 @@
-NeoEdit ships an unmodified copy of IQ-TREE 3 so that Analysis > Phylogeny > Build tree with
-IQ-TREE works out of the box.
+NeoEdit ships an unmodified copy of IQ-TREE 3 so that Analysis > Phylogeny > Maximum
+likelihood (IQ-TREE) works out of the box.
 
 IQ-TREE is a separate program by Bui Quang Minh, Thomas Wong, Nhan Ly-Trong, Huaiyan Ren and
 contributors (https://iqtree.github.io/), distributed under the GNU General Public License,
