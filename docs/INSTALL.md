@@ -60,7 +60,7 @@ To remove it later: `sudo apt remove neoedit`.
 
 * NeoEdit itself, with the example data under *File ▸ Open recent* once you have opened something.
 * **MAFFT** for *Alignment ▸ Align with MAFFT* — no separate install.
-* **IQ-TREE 3** for *Alignment ▸ Build tree with IQ-TREE* — no separate install. It writes the
+* **IQ-TREE 3** for *Analysis ▸ Phylogeny ▸ Build tree with IQ-TREE* — no separate install. It writes the
   tree as a Newick file; open that in [FigTree](https://github.com/rambaut/figtree/releases) or
   [iTOL](https://itol.embl.de/) to look at it.
 * Everything works offline except **File ▸ Import from NCBI / Ensembl / UCSC**, which needs

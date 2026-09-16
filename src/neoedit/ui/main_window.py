@@ -373,12 +373,15 @@ class MainWindow(QMainWindow):
         s.addSeparator(); s.addMenu(self.group_menu)
 
         al = mb.addMenu("&Alignment")
-        for a in (self.a_align, self.a_iqtree, None, self.a_insgapcol, self.a_delgapcol, self.a_rm_gapcols, self.a_pad, None, self.a_consensus, self.a_extract):
+        for a in (self.a_align, None, self.a_insgapcol, self.a_delgapcol, self.a_rm_gapcols, self.a_pad, None, self.a_consensus, self.a_extract):
             al.addAction(a) if a else al.addSeparator()
 
         an = mb.addMenu("A&nalysis")
         for a in (self.a_orf, self.a_primer, self.a_design, self.a_restrict, None, self.a_stats, self.a_ident, self.a_plot):
             an.addAction(a) if a else an.addSeparator()
+        an.addSeparator()
+        self.phylo_menu = an.addMenu("P&hylogeny")
+        self.phylo_menu.addAction(self.a_iqtree)
 
         gm = mb.addMenu("&Genome")
         for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_region, self.a_g_circ, self.a_g_goto, self.a_g_openreg, self.a_g_orfclear, None, self.a_g_clear):

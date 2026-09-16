@@ -135,7 +135,7 @@ actually use, on a codebase that can keep evolving:
 * **Analysis** – identity matrix, entropy/identity conservation plots, sequence
   statistics, consensus tool, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
   NCBI BLAST launcher.
-* **Trees** – maximum-likelihood trees with IQ-TREE 3 (*Alignment ▸ Build tree with IQ-TREE*):
+* **Trees** – maximum-likelihood trees with IQ-TREE 3 (*Analysis ▸ Phylogeny ▸ Build tree with IQ-TREE*):
   ModelFinder or a chosen model, ultrafast/standard bootstrap and SH-aLRT, optional outgroup,
   all or selected sequences/columns. Runs in the background with a live log; the result is a
   Newick file with the real sequence names (plus IQ-TREE's full report) for FigTree, iTOL or R.

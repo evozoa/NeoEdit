@@ -30,6 +30,6 @@ Not sure which Mac you have? Click the Apple menu ▸ **About This Mac**: the "C
 1. Double-click the downloaded `NeoEdit-Linux-x86_64.deb` and click **Install** in the App Center, or run `sudo apt install ./NeoEdit-Linux-x86_64.deb` in a terminal opened in *Downloads*.
 2. Press the Super key and type **NeoEdit**. Remove later with `sudo apt remove neoedit`.
 
-MAFFT (for *Alignment ▸ Align with MAFFT*) and IQ-TREE 3 (for *Alignment ▸ Build tree with IQ-TREE*) are included. Everything works offline except *File ▸ Import from NCBI / Ensembl / UCSC*, which needs an internet connection.
+MAFFT (for *Alignment ▸ Align with MAFFT*) and IQ-TREE 3 (for *Analysis ▸ Phylogeny ▸ Build tree with IQ-TREE*) are included. Everything works offline except *File ▸ Import from NCBI / Ensembl / UCSC*, which needs an internet connection.
 
 **Problems?** Open an issue at https://github.com/evozoa/NeoEdit/issues.
