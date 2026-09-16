@@ -28,7 +28,8 @@ pytest
 ```
 
 MAFFT is only needed to actually run alignments (`conda install -c bioconda mafft`,
-`brew install mafft`, or the Windows installer) — not to run the test suite.
+`brew install mafft`, or the Windows installer) — not to run the test suite. Likewise IQ-TREE
+(`conda install -c bioconda iqtree`): the tests that run it are skipped when it is not installed.
 
 ## Code layout
 

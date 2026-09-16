@@ -32,6 +32,7 @@ from .dialogs.misc_dialogs import (FindDialog, StatsDialog, IdentityDialog, Plot
                                    PreferencesDialog, NewSequenceDialog, ConsensusDialog, OriginDialog)
 from .dialogs.common import TextDialog
 from .dialogs.import_dialog import ImportDialog
+from .dialogs.tree_dialogs import IQTreeDialog, NJDialog
 from .. import __version__
 
 FILE_FILTER = ";;".join(
@@ -258,6 +259,12 @@ class MainWindow(QMainWindow):
 
         # alignment ops
         self.a_align = A("&Align with MAFFT…", self.align_external, "Ctrl+M")
+        self.a_iqtree = A("&Maximum likelihood (IQ-TREE)…", lambda: self._tree_dialog(IQTreeDialog), "Ctrl+Shift+Y",
+                          tip="Maximum-likelihood tree with IQ-TREE 3 (model selection, bootstrap); "
+                              "writes a Newick file for FigTree / iTOL")
+        self.a_nj = A("&Neighbor joining…", lambda: self._tree_dialog(NJDialog),
+                      tip="Neighbor-joining tree from p, JC69, K2P or TN93 distances (Poisson for protein), "
+                          "with bootstrap; writes a Newick file and the distance matrix")
         self.a_rm_gapcols = A("Remove gap-only &columns", self.model_call("remove_gap_only_columns"))
         self.a_pad = A("&Pad sequences to equal length", self.model_call("pad_to_equal_length"))
         self.a_insgapcol = A("Insert gap column at cursor", lambda: self.model.insert_gap_columns(self.view.cur_col, 1), "Ctrl+Space")
@@ -375,6 +382,10 @@ class MainWindow(QMainWindow):
         an = mb.addMenu("A&nalysis")
         for a in (self.a_orf, self.a_primer, self.a_design, self.a_restrict, None, self.a_stats, self.a_ident, self.a_plot):
             an.addAction(a) if a else an.addSeparator()
+        an.addSeparator()
+        self.phylo_menu = an.addMenu("P&hylogeny")
+        self.phylo_menu.addAction(self.a_iqtree)
+        self.phylo_menu.addAction(self.a_nj)
 
         gm = mb.addMenu("&Genome")
         for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_region, self.a_g_circ, self.a_g_goto, self.a_g_openreg, self.a_g_orfclear, None, self.a_g_clear):
@@ -1297,6 +1308,15 @@ class MainWindow(QMainWindow):
         self.model.end_batch()
         self.statusBar().showMessage(f"MAFFT finished: {len(rows)} sequences aligned", 5000)
 
+    def _tree_dialog(self, cls):
+        if self.model.nrows < 3:
+            QMessageBox.information(self, "Phylogeny", "Need at least three aligned sequences."); return
+        s = self.view.selection()
+        cols = (s[2], s[3] + 1) if s and not self.view.sel_rows and s[3] > s[2] else None
+        d = cls(self, self.settings, self.model, self.view.target_rows(), cols)
+        self._children.append(d)
+        d.show()
+
     def extract_cols(self):
         s = self.view.selection()
         if not s:
@@ -2000,7 +2020,7 @@ Other
   Ctrl+Shift+I import from NCBI / Ensembl / UCSC, Ctrl+C copy FASTA, Ctrl+V paste sequences, Ctrl+F find, F3 find next,
   Ctrl+Shift+R reverse complement (as in BioEdit; Ctrl+R also works),
   Ctrl+T translation overlay, Ctrl+Shift+T translate, Ctrl+Shift+O ORF finder, Ctrl+Shift+P primer design,
-  Ctrl+Shift+X restriction sites, Ctrl+M align with MAFFT
+  Ctrl+Shift+X restriction sites, Ctrl+M align with MAFFT, Ctrl+Shift+Y maximum-likelihood tree (IQ-TREE)
 """
         TextDialog(self, "Keyboard shortcuts", txt).exec()
 

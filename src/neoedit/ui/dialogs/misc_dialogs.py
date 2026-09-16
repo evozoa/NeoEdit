@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QDialog, QFormLayout, QComboBox, QLineEdit, QChec
 
 from ...analysis import translate as T
 from ...analysis import external as EXT
+from ...analysis import phylo as PH
 from .common import make_table, NumItem, save_text
 
 
@@ -234,6 +235,21 @@ class PreferencesDialog(QDialog):
         hint.setWordWrap(True)
         form.addRow("", hint)
         lay.addWidget(grp)
+        g3 = QGroupBox("IQ-TREE")
+        f3 = QFormLayout(g3)
+        ed = QLineEdit(settings.value("exe/IQ-TREE", ""))
+        ed.setPlaceholderText("leave blank to use the bundled copy or search PATH")
+        b = QPushButton("…"); b.clicked.connect(lambda _, e=ed: self._browse(e))
+        row = QHBoxLayout(); row.addWidget(ed); row.addWidget(b)
+        w = QWidget(); w.setLayout(row)
+        f3.addRow("IQ-TREE executable", w)
+        self.edits["IQ-TREE"] = ed
+        found = PH.find_iqtree(settings.value("exe/IQ-TREE") or None)
+        hint = QLabel((f"Found: {found}  (IQ-TREE {PH.iqtree_version(found)})" if found else
+                       "Not found. To install: " + PH.iqtree_install_hint()))
+        hint.setWordWrap(True)
+        f3.addRow("", hint)
+        lay.addWidget(g3)
         g2 = QGroupBox("Defaults")
         f2 = QFormLayout(g2)
         self.table = QSpinBox(); self.table.setRange(1, 33); self.table.setValue(int(settings.value("default_table", 1)))

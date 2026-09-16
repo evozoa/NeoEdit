@@ -3,8 +3,9 @@
 #   pyinstaller --noconfirm --clean packaging/neoedit.spec
 # Produces dist/NeoEdit/ (one-dir) and, on macOS, dist/NeoEdit.app. Linux: packaging/make_deb.sh
 # wraps dist/NeoEdit/ in a .deb (icons/menu entry come from packaging/neoedit.desktop).
-# If packaging/mafft/ exists (see .github/workflows/build.yml) it is shipped inside the app
-# and found by neoedit.analysis.external.bundled_mafft().
+# If packaging/mafft/ and packaging/iqtree/ exist (see .github/workflows/build.yml) they are
+# shipped inside the app and found by neoedit.analysis.external.bundled_mafft() and
+# neoedit.analysis.phylo.bundled_iqtree().
 import os
 import sys
 
@@ -27,6 +28,9 @@ datas = [
 mafft_dir = os.path.join(HERE, "mafft")
 if os.path.isdir(mafft_dir):
     datas.append((mafft_dir, "mafft"))
+iqtree_dir = os.path.join(HERE, "iqtree")
+if os.path.isdir(iqtree_dir):
+    datas.append((iqtree_dir, "iqtree"))
 # Bio.Align.substitution_matrices.load("BLOSUM62") reads a data file by name; without this
 # it silently degrades to match/mismatch scoring.
 datas += collect_data_files("Bio")
@@ -105,7 +109,7 @@ if sys.platform == "darwin":
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
             "NSHighResolutionCapable": True,
-            "NSHumanReadableCopyright": "MIT License. MAFFT (bundled) is GPL, (c) Kazutaka Katoh.",
+            "NSHumanReadableCopyright": "MIT License. Bundled: MAFFT (GPL, (c) Kazutaka Katoh), IQ-TREE 3 (GPL-2.0).",
             "LSMinimumSystemVersion": "12.0",
             "LSApplicationCategoryType": "public.app-category.education",
             "CFBundleDocumentTypes": [{

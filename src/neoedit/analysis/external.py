@@ -36,13 +36,17 @@ def mafft_install_hint() -> str:
     return INSTALL_HINTS.get(platform.system(), INSTALL_HINTS["Linux"])
 
 
-def bundled_mafft_dir() -> str | None:
-    """`mafft/` next to the frozen (PyInstaller) app's resources, else None."""
+def bundled_tool_dir(name: str) -> str | None:
+    """`<name>/` next to the frozen (PyInstaller) app's resources, else None."""
     if not getattr(sys, "frozen", False):
         return None
     base = getattr(sys, "_MEIPASS", None) or os.path.dirname(sys.executable)
-    d = os.path.join(base, "mafft")
+    d = os.path.join(base, name)
     return d if os.path.isdir(d) else None
+
+
+def bundled_mafft_dir() -> str | None:
+    return bundled_tool_dir("mafft")
 
 
 def bundled_mafft() -> str | None:

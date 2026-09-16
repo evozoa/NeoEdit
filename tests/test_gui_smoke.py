@@ -272,3 +272,14 @@ def test_gene_model_bars_off_by_default(app):
     assert any(f.type == "CDS" for f in v._features_at(0, 6000))
     w._toggle_gene_models(False)
     w.model.dirty = False; w.close()
+
+
+def test_iqtree_under_analysis_phylogeny(app):
+    from neoedit.ui.main_window import MainWindow
+    w = MainWindow()
+    menus = {m.title().replace("&", ""): m for m in (a.menu() for a in w.menuBar().actions()) if m}
+    phylo = [a.menu() for a in menus["Analysis"].actions() if a.menu()]
+    assert [m.title().replace("&", "") for m in phylo] == ["Phylogeny"]
+    assert phylo[0].actions() == [w.a_iqtree, w.a_nj]
+    assert w.a_iqtree not in menus["Alignment"].actions()
+    w.close()
