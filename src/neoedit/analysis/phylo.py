@@ -1,9 +1,10 @@
 """Maximum-likelihood trees with IQ-TREE 3 (an external program). No Qt.
 
-A run lives in its own output folder: the alignment is written there under safe ids
-(s0, s1, ...) because IQ-TREE rejects names that collide once it has sanitized them, IQ-TREE
-writes its usual files next to it, and `finish_run` writes `<stem>.nwk`, the ML tree with the
-real sequence names back in, for FigTree / iTOL / R.
+A run lives in its own output folder: the alignment is written there under tree labels
+(`tree_labels`: the sequence names with anything but letters, digits and "_.-" turned into
+"_", made unique), so every file IQ-TREE writes carries readable names that any tree viewer
+parses without quoting. `finish_run` copies the ML tree to `<stem>.nwk`; `<stem>.names.tsv`
+maps the labels back to the full names.
 """
 from __future__ import annotations
 
@@ -52,8 +53,7 @@ INSTALL_HINTS = {
     "Linux": f"`conda install -c bioconda iqtree`, or download the Linux tar.gz from {IQTREE_SITE}.",
 }
 
-_NEWICK_SPECIAL = re.compile(r"[\s()\[\]':;,]")
-_SAFE_LABEL = re.compile(r"(?<=[(,])s(\d+)(?=[:,)])")
+_LABEL_JUNK = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
 def iqtree_install_hint() -> str:
@@ -122,19 +122,26 @@ def version_problem(version: str) -> str | None:
     return None
 
 
-def newick_label(name: str) -> str:
-    """A sequence name as a Newick taxon label, single-quoted when it needs to be."""
-    if name and not _NEWICK_SPECIAL.search(name):
-        return name
-    return "'" + name.replace("'", "''") + "'"
+def tree_label(name: str) -> str:
+    """A sequence name as a taxon label that every Newick reader (and IQ-TREE) takes as is:
+    runs of anything but letters, digits, "_", "." and "-" become one "_".
+    "NC_005129.2 Elephas maximus mitochondrion, complete genome" ->
+    "NC_005129.2_Elephas_maximus_mitochondrion_complete_genome" (FigTree shows "_" as a space)."""
+    return _LABEL_JUNK.sub("_", name).strip("_") or "seq"
 
 
-def rename_newick(text: str, names: list[str]) -> str:
-    """Replace the safe ids (s0, s1, ...) that IQ-TREE saw with the real names."""
-    def sub(m):
-        i = int(m.group(1))
-        return newick_label(names[i]) if i < len(names) else m.group(0)
-    return _SAFE_LABEL.sub(sub, text)
+def tree_labels(names: list[str]) -> list[str]:
+    """`tree_label` for each name, with _2, _3, ... appended where labels would repeat."""
+    out, used = [], set()
+    for name in names:
+        base = label = tree_label(name)
+        n = 2
+        while label.lower() in used:
+            label = f"{base}_{n}"
+            n += 1
+        used.add(label.lower())
+        out.append(label)
+    return out
 
 
 def unique_dir(path: str) -> str:
@@ -156,6 +163,7 @@ class IQTreeRun:
     out_dir: str
     stem: str
     names: list[str]
+    labels: list[str]
     seq_type: str
     nsites: int
 
@@ -196,24 +204,30 @@ def prepare_run(rows: list[SequenceRow], out_dir: str, stem: str, seq_type: str,
     if not seqs[0]:
         raise ValueError("No alignment columns to analyse.")
     os.makedirs(out_dir, exist_ok=True)
-    run = IQTreeRun(out_dir, stem, [r.name for r in rows],
+    names = [r.name for r in rows]
+    run = IQTreeRun(out_dir, stem, names, tree_labels(names),
                     "protein" if seq_type == "protein" else "dna", len(seqs[0]))
     gap = str.maketrans(".~", "--")
     with open(run.input_path, "w", encoding="utf-8", newline="\n") as fh:
-        for i, s in enumerate(seqs):
-            fh.write(f">s{i}\n{s.translate(gap)}\n")
-    with open(run.prefix + ".names.tsv", "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("id\tname\n")
-        for i, name in enumerate(run.names):
-            fh.write(f"s{i}\t{name}\n")
+        for label, s in zip(run.labels, seqs):
+            fh.write(f">{label}\n{s.translate(gap)}\n")
+    write_names(run.prefix + ".names.tsv", run.labels, run.names)
     return run
+
+
+def write_names(path: str, labels: list[str], names: list[str]):
+    """Tab-separated table: tree label -> full sequence name."""
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("label\tname\n")
+        for label, name in zip(labels, names):
+            fh.write(f"{label}\t{name}\n")
 
 
 def iqtree_args(run: IQTreeRun, model: str = "MFP", bootstrap: int = 0, replicates: int = 0,
                 alrt: int = 0, threads: int = 0, seed: int = 0, outgroup: list[int] | None = None,
                 extra_args: list[str] | None = None) -> list[str]:
     """Command-line arguments (without the executable). `bootstrap` indexes BOOTSTRAP_METHODS;
-    `threads` 0 = let IQ-TREE decide, up to auto_threads_max(); `seed` 0 = random; `outgroup` = row indexes into run.names."""
+    `threads` 0 = let IQ-TREE decide, up to auto_threads_max(); `seed` 0 = random; `outgroup` = row indexes into run.labels."""
     args = ["-s", run.input_path, "--prefix", run.prefix,
             "-st", "AA" if run.seq_type == "protein" else "DNA",
             "-m", model.strip() or "MFP",
@@ -228,7 +242,7 @@ def iqtree_args(run: IQTreeRun, model: str = "MFP", bootstrap: int = 0, replicat
     if seed > 0:
         args += ["--seed", str(seed)]
     if outgroup:
-        args += ["-o", ",".join(f"s{i}" for i in outgroup)]
+        args += ["-o", ",".join(run.labels[i] for i in outgroup)]
     if extra_args:
         args += extra_args
     return args
@@ -240,20 +254,14 @@ def _grep(text: str, pattern: str) -> str:
 
 
 def finish_run(run: IQTreeRun) -> TreeResult:
-    """After IQ-TREE exits successfully: write `<stem>.nwk` with the real names and summarize."""
+    """After IQ-TREE exits successfully: copy the ML tree to `<stem>.nwk` and summarize."""
     treefile = run.prefix + ".treefile"
     if not os.path.exists(treefile):
         raise RuntimeError(f"IQ-TREE did not write {treefile}; see {run.prefix}.log")
     with open(treefile, encoding="utf-8") as fh:
-        newick = rename_newick(fh.read().strip(), run.names)
+        newick = fh.read().strip()
     with open(run.tree_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(newick + "\n")
-    contree = run.prefix + ".contree"
-    if os.path.exists(contree):
-        with open(contree, encoding="utf-8") as fh:
-            con = rename_newick(fh.read().strip(), run.names)
-        with open(run.prefix + ".consensus.nwk", "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(con + "\n")
     report = run.prefix + ".iqtree"
     text = ""
     if os.path.exists(report):

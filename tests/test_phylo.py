@@ -19,26 +19,26 @@ def _rows():
             SequenceRow("plain_name", "ATGGATGCAAGCAAGGTTCCTAGGTTAACCGG")]
 
 
-def test_newick_label_quoting():
-    assert P.newick_label("plain_name") == "plain_name"
-    assert P.newick_label("a b") == "'a b'"
-    assert P.newick_label("Bob's fish") == "'Bob''s fish'"
-    assert P.newick_label("x:1") == "'x:1'"
+def test_tree_labels():
+    assert P.tree_label("NC_005129.2 Elephas maximus mitochondrion, complete genome") == \
+        "NC_005129.2_Elephas_maximus_mitochondrion_complete_genome"
+    assert P.tree_label("MT455673.1 voucher USNM:FISH:429789 (COI); x") == "MT455673.1_voucher_USNM_FISH_429789_COI_x"
+    assert P.tree_label("Bob's fish") == "Bob_s_fish"
+    assert P.tree_label("Mus músculus") == "Mus_m_sculus"
+    assert P.tree_label(" (?) ") == "seq"
+    # labels that collide get a suffix; comparison ignores case like most tree programs
+    assert P.tree_labels(["taxon A (COI); x", "taxon A (COI): x", "Taxon_A_COI_x", "b"]) == \
+        ["taxon_A_COI_x", "taxon_A_COI_x_2", "Taxon_A_COI_x_3", "b"]
 
 
-def test_rename_newick_only_touches_leaves():
-    names = ["A", "B c", "D"]
-    tree = "(s0:0.1,(s1:0.2,s2:0.3)95/100:0.05,s10:0.1);"
-    assert P.rename_newick(tree, names) == "(A:0.1,('B c':0.2,D:0.3)95/100:0.05,s10:0.1);"
-
-
-def test_prepare_run_writes_safe_ids(tmp_path):
+def test_prepare_run_writes_tree_labels(tmp_path):
     run = P.prepare_run(_rows(), str(tmp_path / "out"), "demo", "dna")
     text = open(run.input_path).read()
-    assert text.splitlines()[0::2] == [">s0", ">s1", ">s2", ">s3"]
-    assert "." not in text and "~" not in text          # BioEdit gap characters become '-'
+    assert text.splitlines()[0::2] == [">taxon_A_COI_x", ">taxon_A_COI_x_2", ">Bob_s_fish", ">plain_name"]
+    seqs = "".join(text.splitlines()[1::2])
+    assert "." not in seqs and "~" not in seqs          # BioEdit gap characters become '-'
     names = open(run.prefix + ".names.tsv").read().splitlines()
-    assert names[1] == "s0\ttaxon A (COI); x"
+    assert names[:2] == ["label\tname", "taxon_A_COI_x\ttaxon A (COI); x"]
     sub = P.prepare_run(_rows(), str(tmp_path / "cols"), "demo", "dna", columns=(4, 10))
     assert sub.nsites == 6
 
@@ -57,7 +57,7 @@ def test_iqtree_args(tmp_path):
                          threads=2, seed=7, outgroup=[2], extra_args=["--quiet"])
     assert args[:6] == ["-s", run.input_path, "--prefix", run.prefix, "-st", "AA"]
     for pair in (["-m", "LG+G4"], ["-T", "2"], ["-B", "1000"], ["--alrt", "1000"],
-                 ["--seed", "7"], ["-o", "s2"]):
+                 ["--seed", "7"], ["-o", "Bob_s_fish"]):
         i = args.index(pair[0]); assert args[i:i + 2] == pair
     assert args[-1] == "--quiet"
     plain = P.iqtree_args(run)
@@ -85,17 +85,19 @@ needs_iqtree = pytest.mark.skipif(not P.find_iqtree(), reason="IQ-TREE not insta
 
 
 @needs_iqtree
-def test_real_run_restores_names(tmp_path):
+def test_real_run_keeps_labels(tmp_path):
     run = P.prepare_run(_rows(), str(tmp_path / "run"), "demo", "dna")
-    res = P.run_iqtree(run, model="JC", threads=1, seed=1, timeout=300)
+    res = P.run_iqtree(run, model="JC", threads=1, seed=1, timeout=300, outgroup=[3])
     assert res.best_model == "JC"
     assert float(res.log_likelihood) < 0
-    for r in _rows():
-        assert P.newick_label(r.name) in res.newick
     assert open(run.tree_path).read().strip() == res.newick
+    assert "'" not in res.newick and " " not in res.newick
+    assert "WARNING" not in open(run.prefix + ".log").read()     # IQ-TREE took the labels as they are
     from Bio import Phylo
-    tree = Phylo.read(run.tree_path, "newick")
-    assert sorted(t.name for t in tree.get_terminals()) == sorted(r.name for r in _rows())
+    for path in (run.tree_path, run.prefix + ".treefile"):
+        tree = Phylo.read(path, "newick")
+        assert sorted(t.name for t in tree.get_terminals()) == sorted(run.labels)
+    assert "plain_name" in open(run.prefix + ".iqtree").read()
 
 
 @needs_iqtree

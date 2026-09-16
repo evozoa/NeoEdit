@@ -132,12 +132,13 @@ def test_bootstrap_support_and_outputs(tmp_path):
     r2 = nj.run_nj(rows, str(tmp_path / "r2"), "demo", "dna", model="k2p", replicates=200, seed=7, outgroup=2)
     assert r1.newick == r2.newick                   # same seed, same supports
     assert r1.newick.startswith("(mid:")            # outgroup first
-    assert "('A one':" in r1.newick or "('A two':" in r1.newick
-    assert "'B''s two'" in r1.newick
+    assert "(A_one:" in r1.newick or "(A_two:" in r1.newick
+    assert "B_s_two:" in r1.newick and "'" not in r1.newick
     assert ")100:" in r1.newick
     from Bio import Phylo
     tree = Phylo.read(r1.tree_path, "newick")
-    assert sorted(t.name for t in tree.get_terminals()) == sorted(r.name for r in rows)
+    assert sorted(t.name for t in tree.get_terminals()) == ["A_one", "A_two", "B_one", "B_s_two", "mid", "mid_2"]
+    assert open(str(tmp_path / "r1" / "demo.names.tsv")).read().splitlines()[-1] == "B_s_two\tB's two"
     report = open(r1.report_path, encoding="utf-8").read()
     assert "200 replicates, random seed 7" in report and "Outgroup:         mid" in report
     assert r1.seed == 7

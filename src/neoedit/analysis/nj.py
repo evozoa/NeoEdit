@@ -18,7 +18,7 @@ from typing import Callable
 import numpy as np
 
 from ..model.alignment import SequenceRow
-from .phylo import newick_label
+from .phylo import tree_labels, write_names
 
 DNA_MODELS = [
     ("p-distance (proportion of differences)", "p"),
@@ -200,10 +200,11 @@ class Tree:
             D[a] = [dist[b] for b in range(self.n)]
         return D
 
-    def newick(self, names: list[str], support: dict[int, float] | None = None,
+    def newick(self, labels: list[str], support: dict[int, float] | None = None,
                outgroup: int | None = None) -> str:
         """Newick text, drawn from the last joining node, or from the outgroup's neighbour with
-        the outgroup listed first. `support` maps split bitmasks to percentages."""
+        the outgroup listed first. `labels` must be Newick-safe (phylo.tree_labels);
+        `support` maps split bitmasks to percentages."""
         full = (1 << self.n) - 1
         root = self.adj[outgroup][0][0] if outgroup is not None else self.center
         order, parent = self._walk(root)
@@ -219,7 +220,7 @@ class Tree:
             if outgroup is not None and u == root:
                 kids.sort(key=lambda v: v != outgroup)
             if u < self.n:
-                s, m = newick_label(names[u]), 1 << u
+                s, m = labels[u], 1 << u
             else:
                 s = "(" + ",".join(f"{text[v]}:{_fmt(length[v])}" for v in kids) + ")"
                 m = 0
@@ -373,18 +374,20 @@ def run_nj(rows: list[SequenceRow], out_dir: str, stem: str, seq_type: str, mode
             warnings.append(f"{capped} bootstrap replicate(s) had undefined distances; those were set to "
                             f"{cap:.4g} (twice the largest observed distance).")
 
-    newick = tree.newick(names, support, outgroup)
+    labels = tree_labels(names)
+    newick = tree.newick(labels, support, outgroup)
     os.makedirs(out_dir, exist_ok=True)
     prefix = os.path.join(out_dir, stem)
     tree_path = prefix + ".nj.nwk"
     with open(tree_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(newick + "\n")
+    write_names(prefix + ".names.tsv", labels, names)
     distance_path = prefix + ".distances.csv"
     with open(distance_path, "w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow([""] + names)
-        for name, row in zip(names, D):
-            w.writerow([name] + [f"{x:.6f}" for x in row])
+        w.writerow([""] + labels)
+        for label, row in zip(labels, D):
+            w.writerow([label] + [f"{x:.6f}" for x in row])
     report_path = prefix + ".nj.txt"
     lines = [
         "Neighbor-joining tree (NeoEdit)",
@@ -403,6 +406,7 @@ def run_nj(rows: list[SequenceRow], out_dir: str, stem: str, seq_type: str, mode
         "",
         f"Tree:             {os.path.basename(tree_path)}",
         f"Distance matrix:  {os.path.basename(distance_path)}",
+        f"Label -> name:    {stem}.names.tsv",
     ]
     lines += [""] + [f"Warning: {w}" for w in warnings] if warnings else []
     lines += ["", "Please cite:", "  " + CITATION]

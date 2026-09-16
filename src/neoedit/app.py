@@ -211,7 +211,7 @@ def self_test(report_path: str) -> int:
         with tempfile.TemporaryDirectory() as td:
             run = phylo.prepare_run(rows, os.path.join(td, "run"), "selftest", "dna")
             res = phylo.run_iqtree(run, exe, timeout=300, model="JC", threads=1, seed=1)
-        if "'seq 4'" not in res.newick:
+        if "seq_4:" not in res.newick:
             raise RuntimeError(f"unexpected tree: {res.newick}")
         return f"{exe} (IQ-TREE {ver}); 4-taxon JC tree, logL {res.log_likelihood}"
 
