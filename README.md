@@ -140,13 +140,17 @@ actually use, on a codebase that can keep evolving:
   statistics, consensus tool, MAFFT alignment (local executable; strategy/threads/--adjustdirection options),
   NCBI BLAST launcher.
 * **Trees** (*Analysis ▸ Phylogeny*) – all or selected sequences/columns, optional outgroup;
-  runs in the background and writes a Newick file with the real sequence names for FigTree,
-  iTOL or R (NeoEdit does not draw trees itself).
+  runs in the background and writes a Newick file with the real sequence names, shown in
+  NeoEdit's tree viewer when the run finishes (also for FigTree, iTOL or R).
   * *Maximum likelihood* with IQ-TREE 3 (bundled): ModelFinder or a chosen model,
     ultrafast/standard bootstrap and SH-aLRT, live log and IQ-TREE's full report.
   * *Neighbor joining*, computed by NeoEdit: p-distance, Jukes–Cantor, Kimura 2-parameter or
     Tamura–Nei (p or Poisson for protein), pairwise or complete deletion of gaps/ambiguities,
     bootstrap; also writes the distance matrix (CSV). Distances match R's `ape::dist.dna`.
+  * *Open tree…* – a basic viewer for Newick/NEXUS trees: phylogram or cladogram, support
+    values, scale bar, zoom; click a branch to select its clade, then root there, rotate it or
+    select its sequences in the alignment; midpoint rooting, ladderize; export SVG/PNG or save
+    the rerooted tree. Tree files (`.nwk`, `.treefile`, …) also open from *File ▸ Open*.
 * **Formats** – FASTA, Clustal, PHYLIP, NEXUS, Stockholm, GenBank, EMBL, MSF, plus
   full support for BioEdit's own formats: the binary `.bio` project file is read and
   written byte-for-byte as BioEdit 7 writes it, and GenBank can be read/written in

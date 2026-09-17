@@ -347,6 +347,18 @@ class AlignmentView(QAbstractScrollArea):
         """Rows an operation should apply to: selection if any, else current row."""
         return self.selected_rows()
 
+    def select_rows(self, rows):
+        """Select whole sequences (as clicking their titles does) and bring the first into view."""
+        rows = sorted(set(rows))
+        self.sel_rows = set(rows)
+        self.anchor = None
+        if rows:
+            self.cur_row = rows[0]
+            self.ensure_visible(rows[0], self.cur_col)
+            self.cursorChanged.emit(self.cur_row, self.cur_col)
+        self.selectionChanged.emit()
+        self.viewport().update()
+
     def select_all(self):
         self.sel_rows = set(range(self.model.nrows))
         self.anchor = None
