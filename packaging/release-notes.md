@@ -1,3 +1,14 @@
+## What's new in 0.3.0
+
+- **Phylogenetic trees** — *Analysis ▸ Phylogeny*:
+  - **Maximum likelihood (IQ-TREE)…** (Ctrl+Shift+Y). IQ-TREE 3 is included: automatic model selection or a model of your choice, bootstrap and SH-aLRT branch support, optional outgroup.
+  - **Neighbor joining…** with p-distance, Jukes–Cantor, Kimura 2-parameter or Tamura–Nei distances and bootstrap support; also saves the distance matrix for Excel.
+  - Each run saves its results in a new folder next to your alignment. Open the tree (`.nwk`) in [FigTree](https://github.com/rambaut/figtree/releases) or [iTOL](https://itol.embl.de/) — or use **View in iTOL…**.
+- **Your choice of names for NCBI imports** — *Sequence names…* on the NCBI tab (or *File ▸ NCBI sequence names…*): drag fields such as accession, genus, species, isolate, voucher or country into the order you want.
+- **Edit ▸ Select to Beginning / Select to End**. In Edit mode, **Delete** and **Backspace** now remove the selected residues.
+- Clicking a gene or exon in the gene-model view selects it in the alignment.
+- Dragging sequence names works as in BioEdit: click a name to select it, click it again to drag it to a new place.
+
 ## Install NeoEdit
 
 Download the file for your computer, then follow the one-time steps below.
