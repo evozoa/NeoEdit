@@ -4,7 +4,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QRect, QPoint, QPointF, Signal, QTimer
 from PySide6.QtGui import (QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QKeyEvent, QPolygonF,
                            QMouseEvent, QWheelEvent, QPalette)
-from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QMenu, QInputDialog, QToolButton
+from PySide6.QtWidgets import (QAbstractScrollArea, QApplication, QMenu, QInputDialog, QToolButton,
+                               QStyle, QStyleFactory)
 
 from ..model.alignment import AlignmentModel, GAP_CHARS, Feature
 from ..model import colors as C
@@ -111,6 +112,7 @@ class AlignmentView(QAbstractScrollArea):
         self._refresh_timer.setInterval(0)
         self._refresh_timer.timeout.connect(self._refresh)
         self._auto_scheme()
+        self._classic_scrollbars()
         self._update_scrollbars()
         self._make_corner_buttons()
 
@@ -171,6 +173,19 @@ class AlignmentView(QAbstractScrollArea):
             self.col_pad = max(0, min(30, col_pad))
         self._apply_font()
         self._refresh()
+
+    def _classic_scrollbars(self):
+        """BioEdit-style scrollbars: a plain bar of fixed width with an arrow button at each end,
+        one column (or one sequence) per click. Windows 11's own scrollbars are thin, have no
+        arrows and change width when the mouse is over them, which makes the grid jump."""
+        self._bar_style = QStyleFactory.create("Fusion")
+        for bar, horizontal in ((self.horizontalScrollBar(), True), (self.verticalScrollBar(), False)):
+            if self._bar_style is not None:
+                bar.setStyle(self._bar_style)          # the style object must outlive the widget
+            bar.setSingleStep(1)                       # arrow click = one column / one sequence
+            extent = max(16, bar.style().pixelMetric(QStyle.PM_ScrollBarExtent, None, bar))
+            bar.setFixedHeight(extent) if horizontal else bar.setFixedWidth(extent)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
 
     def _make_corner_buttons(self):
         """BioEdit-style spacing toggles in the top-left corner of the grid."""
