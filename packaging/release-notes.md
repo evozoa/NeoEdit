@@ -1,13 +1,10 @@
-## What's new in 0.3.0
+## What's new in 0.4.0
 
-- **Phylogenetic trees** — *Analysis ▸ Phylogeny*:
-  - **Maximum likelihood (IQ-TREE)…** (Ctrl+Shift+Y). IQ-TREE 3 is included: automatic model selection or a model of your choice, bootstrap and SH-aLRT branch support, optional outgroup.
-  - **Neighbor joining…** with p-distance, Jukes–Cantor, Kimura 2-parameter or Tamura–Nei distances and bootstrap support; also saves the distance matrix for Excel.
-  - Each run saves its results in a new folder next to your alignment. Open the tree (`.nwk`) in [FigTree](https://github.com/rambaut/figtree/releases) or [iTOL](https://itol.embl.de/) — or use **View in iTOL…**.
-- **Your choice of names for NCBI imports** — *Sequence names…* on the NCBI tab (or *File ▸ NCBI sequence names…*): drag fields such as accession, genus, species, isolate, voucher or country into the order you want.
-- **Edit ▸ Select to Beginning / Select to End**. In Edit mode, **Delete** and **Backspace** now remove the selected residues.
-- Clicking a gene or exon in the gene-model view selects it in the alignment.
-- Dragging sequence names works as in BioEdit: click a name to select it, click it again to drag it to a new place.
+- **Tree viewer** — trees now open inside NeoEdit. A neighbor-joining or IQ-TREE run shows its tree when it finishes, and *Analysis ▸ Phylogeny ▸ Open tree…* opens any Newick or NEXUS tree file.
+  - Branch lengths or a cladogram, bootstrap support values, a scale bar, zoom and font size.
+  - Click a branch to pick out that clade, then **Root here**, **Rotate** it, or **Select in alignment** to find those sequences in your alignment. Also **Midpoint root**, **Ladderize**, and **Original** to undo.
+  - Save the picture (SVG/PNG) or the rerooted tree (Newick).
+- **Scroll bars** below and beside the alignment now have arrow buttons that move one position per click, and keep a steady size, as in BioEdit.
 
 ## Install NeoEdit
 
