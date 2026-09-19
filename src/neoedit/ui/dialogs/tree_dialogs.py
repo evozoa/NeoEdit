@@ -104,15 +104,17 @@ class TreeDialogBase(QDialog):
         self.b_folder = QPushButton("Open folder"); self.b_folder.clicked.connect(self.open_folder)
         self.b_copy = QPushButton("Copy tree"); self.b_copy.clicked.connect(self.copy_tree)
         self.b_copy.setToolTip("Copy the tree (Newick, real sequence names) to the clipboard")
+        self.b_view = QPushButton("View tree"); self.b_view.clicked.connect(self.view_tree)
+        self.b_view.setToolTip("Show the tree in NeoEdit's tree viewer")
         self.b_itol = QPushButton("View in iTOL…"); self.b_itol.clicked.connect(self.open_itol)
         self.b_itol.setToolTip("Copy the tree and open iTOL's upload page in the browser; paste the tree there")
-        for w in (self.b_folder, self.b_copy, self.b_itol):
+        for w in (self.b_folder, self.b_view, self.b_copy, self.b_itol):
             w.setEnabled(False)
         close = QPushButton("Close"); close.clicked.connect(self.close)
         for w in (self.b_run, self.b_stop):
             btns.addWidget(w)
         btns.addStretch(1)
-        for w in (self.b_folder, self.b_copy, self.b_itol, close):
+        for w in (self.b_folder, self.b_view, self.b_copy, self.b_itol, close):
             btns.addWidget(w)
         lay.addLayout(btns)
 
@@ -155,7 +157,7 @@ class TreeDialogBase(QDialog):
         self.b_stop.setEnabled(on)
         self.busy.setVisible(on)
         self.b_folder.setEnabled(self.out_folder is not None and not on)
-        for w in (self.b_copy, self.b_itol):
+        for w in (self.b_view, self.b_copy, self.b_itol):
             w.setEnabled(self.tree is not None and not on)
 
     def can_run(self) -> bool:
@@ -188,6 +190,17 @@ class TreeDialogBase(QDialog):
         if self.tree:
             QGuiApplication.clipboard().setText(self.tree.newick)
             self._status("Tree copied to the clipboard (Newick)")
+
+    def view_tree(self):
+        """Open the result in the tree viewer (the main window keeps the window alive)."""
+        parent = self.parent()
+        if self.tree and parent is not None and hasattr(parent, "open_tree_path"):
+            self.viewer = parent.open_tree_path(self.tree.tree_path)
+
+    def tree_finished(self):
+        """A run just produced a tree: show it."""
+        if self.settings.value("phylo/auto_view", True) in (True, "true"):
+            self.view_tree()
 
     def open_itol(self):
         if self.tree:
@@ -367,6 +380,8 @@ class IQTreeDialog(TreeDialogBase):
                 self.summary.setText("Finished.  " + "   ".join(bits)
                                      + f"\nFull report: {r.report_path}")
                 self._status(f"IQ-TREE finished: {r.tree_path}")
+                self.set_running(False)
+                self.tree_finished()
         self.set_running(False)
 
     def stop(self):
@@ -496,6 +511,7 @@ class NJDialog(TreeDialogBase):
             self.log.setPlainText(fh.read())
         self.summary.setText(f"Finished.  Tree: {res.tree_path}\nDistances: {res.distance_path}")
         self._status(f"Neighbor-joining tree written: {res.tree_path}")
+        self.tree_finished()
 
     def _failed(self, msg):
         if not msg:

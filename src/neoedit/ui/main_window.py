@@ -33,6 +33,7 @@ from .dialogs.misc_dialogs import (FindDialog, StatsDialog, IdentityDialog, Plot
 from .dialogs.common import TextDialog
 from .dialogs.import_dialog import ImportDialog
 from .dialogs.tree_dialogs import IQTreeDialog, NJDialog
+from .tree_view import TreeWindow, TREE_EXTENSIONS, TREE_FILTER
 from .. import __version__
 
 FILE_FILTER = ";;".join(
@@ -268,6 +269,8 @@ class MainWindow(QMainWindow):
         self.a_nj = A("&Neighbor joining…", lambda: self._tree_dialog(NJDialog),
                       tip="Neighbor-joining tree from p, JC69, K2P or TN93 distances (Poisson for protein), "
                           "with bootstrap; writes a Newick file and the distance matrix")
+        self.a_open_tree = A("&Open tree…", self.open_tree,
+                             tip="View a Newick or NEXUS tree (e.g. from IQ-TREE, neighbor joining, MEGA)")
         self.a_rm_gapcols = A("Remove gap-only &columns", self.model_call("remove_gap_only_columns"))
         self.a_pad = A("&Pad sequences to equal length", self.model_call("pad_to_equal_length"))
         self.a_insgapcol = A("Insert gap column at cursor", lambda: self.model.insert_gap_columns(self.view.cur_col, 1), "Ctrl+Space")
@@ -389,6 +392,8 @@ class MainWindow(QMainWindow):
         self.phylo_menu = an.addMenu("P&hylogeny")
         self.phylo_menu.addAction(self.a_iqtree)
         self.phylo_menu.addAction(self.a_nj)
+        self.phylo_menu.addSeparator()
+        self.phylo_menu.addAction(self.a_open_tree)
 
         gm = mb.addMenu("&Genome")
         for a in (self.a_g_ref, self.a_g_open, self.a_g_ann, self.a_g_syn, self.a_g_add, None, self.a_g_panel, self.a_g_region, self.a_g_circ, self.a_g_goto, self.a_g_openreg, self.a_g_orfclear, None, self.a_g_clear):
@@ -602,6 +607,9 @@ class MainWindow(QMainWindow):
             self.open_path(path)
 
     def open_path(self, path: str):
+        if path.lower().endswith(TREE_EXTENSIONS):
+            self.open_tree_path(path)
+            return
         try:
             if os.path.getsize(path) > 50_000_000 and path.lower().endswith((".fa", ".fasta", ".fna")):
                 r = QMessageBox.question(self, "Large FASTA", "This FASTA is large. Open it as a genome (indexed, one contig at a time)?",
@@ -1323,6 +1331,46 @@ class MainWindow(QMainWindow):
                 self.model.rows[i].description = r.description
         self.model.end_batch()
         self.statusBar().showMessage(f"MAFFT finished: {len(rows)} sequences aligned", 5000)
+
+    def open_tree(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Open tree", self.settings.value("last_dir", ""), TREE_FILTER)
+        if path:
+            self.open_tree_path(path)
+
+    def open_tree_path(self, path: str):
+        """Show a tree file in a new viewer window; returns the window (or None)."""
+        w = TreeWindow(self, select_names=self.select_tree_names)
+        try:
+            w.load(path)
+        except Exception as e:           # noqa: BLE001 - any unreadable file
+            w.deleteLater()
+            QMessageBox.warning(self, "Open tree", f"{path}\n\n{e}")
+            return None
+        self._children.append(w)
+        w.show(); w.raise_()
+        self.settings.setValue("last_dir", os.path.dirname(path))
+        return w
+
+    def select_tree_names(self, labels, names=None) -> int:
+        """Select the alignment rows that tree tips `labels` stand for: the full name from the run's
+        names.tsv, the row name itself, its tree label, or its accession. Returns how many."""
+        from ..analysis.phylo import tree_labels
+        names = names or {}
+        rows = self.model.rows
+        by_name = {r.name: i for i, r in enumerate(rows)}
+        by_label = {lab: i for i, lab in enumerate(tree_labels([r.name for r in rows]))}
+        by_acc = {r.accession: i for i, r in enumerate(rows)}
+        hits = []
+        for lab in labels:
+            for key, table in ((names.get(lab), by_name), (lab, by_name), (lab, by_label),
+                               (lab.replace("_", " "), by_name), (lab, by_acc)):
+                if key is not None and key in table:
+                    hits.append(table[key])
+                    break
+        if hits:
+            self.view.select_rows(hits)
+            self.raise_(); self.activateWindow()
+        return len(set(hits))
 
     def _tree_dialog(self, cls):
         if self.model.nrows < 3:
