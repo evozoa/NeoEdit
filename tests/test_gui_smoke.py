@@ -350,3 +350,35 @@ def test_select_to_beginning_then_delete(app):
     assert m.rows[0].seq == "ACGTACGTAC"
     m.dirty = False
     w.close()
+
+
+def test_grid_scrollbars_are_classic(app):
+    """BioEdit-style grid scrollbars: always shown, fixed width, arrow buttons, one column or
+    one sequence per arrow click (not Windows 11's thin bars that grow under the mouse)."""
+    from PySide6.QtWidgets import QAbstractSlider, QStyle, QStyleOptionSlider
+    from neoedit.ui.main_window import MainWindow
+    w = MainWindow()
+    w.open_path(EXAMPLE)
+    w.resize(700, 400); w.show(); app.processEvents()
+    v = w.view
+    assert v.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOn
+    hs, vs = v.horizontalScrollBar(), v.verticalScrollBar()
+    assert hs.isVisible() and hs.height() >= 16 and vs.width() >= 16
+    assert hs.singleStep() == 1 and vs.singleStep() == 1
+    for bar in (hs, vs):
+        opt = QStyleOptionSlider()
+        opt.initFrom(bar)
+        opt.orientation = bar.orientation()
+        up = bar.style().subControlRect(QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarSubLine, bar)
+        down = bar.style().subControlRect(QStyle.CC_ScrollBar, opt, QStyle.SC_ScrollBarAddLine, bar)
+        assert up.isValid() and not up.isEmpty() and down.isValid() and not down.isEmpty()
+    hs.setValue(0)
+    hs.triggerAction(QAbstractSlider.SliderSingleStepAdd)
+    assert hs.value() == 1                      # one arrow click = one alignment column
+    hs.triggerAction(QAbstractSlider.SliderSingleStepSub)
+    assert hs.value() == 0
+    height = hs.height()
+    app.processEvents()
+    assert hs.height() == height                # a fixed size, whatever the mouse does
+    w.model.dirty = False
+    w.close()
