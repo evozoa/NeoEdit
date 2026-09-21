@@ -274,6 +274,8 @@ class IQTreeDialog(TreeDialogBase):
                                 "using at most all cores but one. On small alignments that timing can take "
                                 "longer than the search itself; set a number to skip it.")
         self.threads.setValue(int(s.value("iqtree/threads", 0)))
+        # Qt's size hint clips the "auto (up to N)" text on some platforms
+        self.threads.setMinimumWidth(round(self.threads.sizeHint().width() * 1.3))
         self.seed = QSpinBox(); self.seed.setRange(0, 2**31 - 1); self.seed.setSpecialValueText("random")
         trow = QHBoxLayout(); trow.addWidget(self.threads); trow.addWidget(QLabel("Random seed")); trow.addWidget(self.seed)
         trow.addStretch(1)
