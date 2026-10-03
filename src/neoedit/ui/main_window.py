@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import traceback
 
@@ -37,7 +38,7 @@ from .tree_view import TreeWindow, TREE_EXTENSIONS, TREE_FILTER
 from .. import __version__
 
 FILE_FILTER = ";;".join(
-    ["All sequence files (*.fasta *.fas *.fa *.fna *.faa *.aln *.phy *.nex *.nexus *.sto *.gb *.gbk *.embl *.msf *.bio *.txt)"]
+    ["All sequence files (*.fasta *.fas *.fa *.fna *.faa *.aln *.phy *.nex *.nexus *.sto *.gb *.gbk *.embl *.msf *.bio *.fastq *.fq *.fastq.gz *.fq.gz *.txt)"]
     + [f"{lbl} (" + " ".join("*" + e for e in exts) + ")" for lbl, _, exts, _ in mio.FORMATS]
     + ["All files (*)"])
 
@@ -623,9 +624,11 @@ class MainWindow(QMainWindow):
         if self.genome:
             self.genome_close()
         try:
-            model = mio.load(path)
+            model = self._load_file(path)
         except Exception as e:
             QMessageBox.critical(self, "Open failed", f"{path}\n\n{e}\n\n{traceback.format_exc()[-800:]}")
+            return
+        if model is None:
             return
         self._set_model(model)
         self._reset_reference_mode()
@@ -639,6 +642,21 @@ class MainWindow(QMainWindow):
                 msg += f" — genome view: {self.annotation.count()} annotated features"
         self.statusBar().showMessage(msg, 6000)
 
+    def _load_file(self, path: str):
+        """mio.load with the FASTQ read cap: a file holding more reads than the cap opens its
+        first FASTQ_READ_CAP reads if the user agrees. Returns None if they decline."""
+        cap = mio.FASTQ_READ_CAP
+        model = mio.load(path, max_records=cap)
+        if model.truncated:
+            r = QMessageBox.question(
+                self, "Large FASTQ",
+                f"{os.path.basename(path)} holds more than {cap:,} reads.\n\n"
+                f"Open the first {cap:,} reads? (Quality scores are not kept.)",
+                QMessageBox.Ok | QMessageBox.Cancel)
+            if r != QMessageBox.Ok:
+                return None
+        return model
+
     def import_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Import sequences", self.settings.value("last_dir", ""), FILE_FILTER)
         if path:
@@ -648,9 +666,11 @@ class MainWindow(QMainWindow):
         """Append every sequence in `path` to the current alignment; returns the number added.
         `rename(record id) -> name or None` renames them on the way in (NCBI name format)."""
         try:
-            m = mio.load(path)
+            m = self._load_file(path)
         except Exception as e:
             QMessageBox.critical(self, "Import failed", str(e)); return 0
+        if m is None:
+            return 0
         if rename is not None:
             for r in m.rows:
                 new = rename(r.id or r.accession)
@@ -693,7 +713,8 @@ class MainWindow(QMainWindow):
         dlg.show(); dlg.raise_(); dlg.activateWindow()
 
     def save_file(self) -> bool:
-        if not self.model.path or self.model.format == "genbank" and self.model.nrows > 1:
+        if (not self.model.path or self.model.format == "genbank" and self.model.nrows > 1
+                or self.model.format in mio.READ_ONLY_FORMATS):
             return self.save_file_as()
         try:
             mio.save(self.model, self.model.path, self.model.format)
@@ -704,14 +725,19 @@ class MainWindow(QMainWindow):
         return True
 
     def save_file_as(self) -> bool:
-        filters = [f"{lbl} (" + " ".join("*" + e for e in exts) + ")" for lbl, _, exts, _ in mio.FORMATS]
+        writable = [f for f in mio.FORMATS if f[1] not in mio.READ_ONLY_FORMATS]
+        filters = [f"{lbl} (" + " ".join("*" + e for e in exts) + ")" for lbl, _, exts, _ in writable]
         start = self.model.path or os.path.join(self.settings.value("last_dir", ""), "alignment.fasta")
+        if self.model.format in mio.READ_ONLY_FORMATS:
+            # never default to overwriting the source reads
+            stem = re.sub(r"\.(fastq|fq)(\.gz)?$", "", start, flags=re.I)
+            start = stem + ".fasta"
         path, chosen = QFileDialog.getSaveFileName(self, "Save alignment as", start, ";;".join(filters))
         if not path:
             return False
         idx = filters.index(chosen) if chosen in filters else 0
-        fmt = mio.FORMATS[idx][1]
-        exts = mio.FORMATS[idx][2]
+        fmt = writable[idx][1]
+        exts = writable[idx][2]
         if not os.path.splitext(path)[1]:
             path += exts[0]
         try:
@@ -1761,10 +1787,10 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            new = mio.load(path)
+            new = self._load_file(path)
         except Exception as e:
             QMessageBox.critical(self, "Open failed", str(e)); return
-        if not new.rows:
+        if new is None or not new.rows:
             return
         prog = QProgressDialog(f"MAFFT --add: anchoring {len(new.rows)} sequence(s)…", None, 0, 0, self)
         prog.setWindowModality(Qt.WindowModal); prog.show(); QApplication.processEvents()
