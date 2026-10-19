@@ -179,9 +179,14 @@ class AlignmentView(QAbstractScrollArea):
         one column (or one sequence) per click. Windows 11's own scrollbars are thin, have no
         arrows and change width when the mouse is over them, which makes the grid jump."""
         self._bar_style = QStyleFactory.create("Fusion")
+        if self._bar_style is not None:
+            # Qt-owned, so it is destroyed with this view and after its scrollbars. Left to Python,
+            # garbage collection at exit can delete it while the bars still use it, which aborts
+            # ("shared QObject was deleted directly").
+            self._bar_style.setParent(self)
         for bar, horizontal in ((self.horizontalScrollBar(), True), (self.verticalScrollBar(), False)):
             if self._bar_style is not None:
-                bar.setStyle(self._bar_style)          # the style object must outlive the widget
+                bar.setStyle(self._bar_style)
             bar.setSingleStep(1)                       # arrow click = one column / one sequence
             extent = max(16, bar.style().pixelMetric(QStyle.PM_ScrollBarExtent, None, bar))
             bar.setFixedHeight(extent) if horizontal else bar.setFixedWidth(extent)
