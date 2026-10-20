@@ -1,10 +1,8 @@
-## What's new in 0.4.0
+## What's new in 0.5.0
 
-- **Tree viewer** — trees now open inside NeoEdit. A neighbor-joining or IQ-TREE run shows its tree when it finishes, and *Analysis ▸ Phylogeny ▸ Open tree…* opens any Newick or NEXUS tree file.
-  - Branch lengths or a cladogram, bootstrap support values, a scale bar, zoom and font size.
-  - Click a branch to pick out that clade, then **Root here**, **Rotate** it, or **Select in alignment** to find those sequences in your alignment. Also **Midpoint root**, **Ladderize**, and **Original** to undo.
-  - Save the picture (SVG/PNG) or the rerooted tree (Newick).
-- **Scroll bars** below and beside the alignment now have arrow buttons that move one position per click, and keep a steady size, as in BioEdit.
+- **FASTQ files open in NeoEdit.** *File ▸ Open* and *Import* accept sequencing reads (`.fastq`, `.fq`): each read becomes a row. Quality scores are not kept. A file with more than 20,000 reads asks before opening the first 20,000. To save, choose FASTA or another format; NeoEdit never writes over your original FASTQ.
+- **Compressed files open directly.** Gzipped files (`.fastq.gz`, `.fasta.gz`, …) no longer need unzipping first.
+- **IQ-TREE's Threads box** is wide enough to show "auto (up to N)" in full.
 
 ## Install NeoEdit
 
