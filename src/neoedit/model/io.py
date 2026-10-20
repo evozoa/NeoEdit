@@ -1,9 +1,11 @@
 """Load / save alignments via Biopython, plus a best-effort BioEdit .bio reader."""
 from __future__ import annotations
 
+import gzip
 import io
 import os
 import re
+from itertools import islice
 from typing import Optional
 
 from Bio import AlignIO, SeqIO
@@ -28,7 +30,15 @@ FORMATS = [
     ("MSF", "msf", [".msf"], True),
     ("BioEdit project (.bio)", "bio", [".bio"], True),
     ("GenBank (BioEdit dialect)", "genbank-bioedit", [".gb"], False),
+    ("FASTQ (reads, open only)", "fastq", [".fastq", ".fq", ".fastq.gz", ".fq.gz"], False),
 ]
+
+# Formats NeoEdit reads but does not write: rows carry no per-base qualities, so a FASTQ
+# "saved" from the editor would lose them. Save offers the other formats instead.
+READ_ONLY_FORMATS = {"fastq"}
+
+# Reads loaded from one FASTQ before asking; an alignment editor is not a read-set browser.
+FASTQ_READ_CAP = 20_000
 
 EXT_TO_FORMAT = {}
 for _label, _fmt, _exts, _ in FORMATS:
@@ -36,22 +46,40 @@ for _label, _fmt, _exts, _ in FORMATS:
         EXT_TO_FORMAT.setdefault(e, _fmt)
 
 
+def _is_gzip(path: str) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(2) == b"\x1f\x8b"
+    except OSError:
+        return False
+
+
+def open_text(path: str):
+    """Open a sequence file for reading as text, transparently gunzipping .gz files."""
+    if _is_gzip(path):
+        return gzip.open(path, "rt", errors="replace")
+    return open(path, "r", errors="replace")
+
+
 def guess_format(path: str, text_head: str | None = None) -> str:
     if BIO.is_bio_file(path):
         return "bio"
-    ext = os.path.splitext(path)[1].lower()
+    base = path[:-3] if path.lower().endswith(".gz") else path
+    ext = os.path.splitext(base)[1].lower()
     if ext in EXT_TO_FORMAT and ext != ".txt":
         return EXT_TO_FORMAT[ext]
     head = text_head
     if head is None:
         try:
-            with open(path, "r", errors="replace") as fh:
+            with open_text(path) as fh:
                 head = fh.read(4096)
-        except OSError:
+        except (OSError, EOFError):
             head = ""
     h = head.lstrip()
     if h.startswith(">"):
         return "fasta"
+    if h.startswith("@") and "\n+" in h:
+        return "fastq"
     if h.upper().startswith("CLUSTAL"):
         return "clustal"
     if h.upper().startswith("#NEXUS"):
@@ -86,9 +114,29 @@ def _rows_from_records(records) -> list[SequenceRow]:
     return rows
 
 
-def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
+def _read_fastq(path: str, max_records: Optional[int]) -> tuple[list[SequenceRow], bool]:
+    """Reads as rows (qualities are dropped). Returns (rows, truncated): at most `max_records`
+    rows, truncated=True when the file holds more."""
+    from Bio.SeqIO.QualityIO import FastqGeneralIterator
+    with open_text(path) as fh:
+        it = FastqGeneralIterator(fh)
+        recs = list(it if max_records is None else islice(it, max_records + 1))
+    truncated = max_records is not None and len(recs) > max_records
+    if truncated:
+        recs = recs[:max_records]
+    rows = _rows_from_records(SeqRecord(Seq(seq), id=title.split(None, 1)[0] if title else "",
+                                        description=title) for title, seq, _qual in recs)
+    return rows, truncated
+
+
+def load(path: str, fmt: Optional[str] = None, max_records: Optional[int] = None) -> AlignmentModel:
+    """Load a sequence file. `max_records` caps how many FASTQ reads are read; the model's
+    `truncated` flag says whether the file held more."""
     fmt = fmt or guess_format(path)
-    if fmt == "bio":
+    truncated = False
+    if fmt == "fastq":
+        rows, truncated = _read_fastq(path, max_records)
+    elif fmt == "bio":
         rows, bio_info = _read_bio(path), None
         try:
             _rows2, bio_info = BIO.read_bio(path)
@@ -103,7 +151,7 @@ def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
                 if t:
                     r.name = t
     else:
-        with open(path, "r", errors="replace") as fh:
+        with open_text(path) as fh:
             try:
                 records = list(SeqIO.parse(fh, fmt))
             except Exception:
@@ -115,6 +163,7 @@ def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
     model.path = path
     model.format = fmt
     model.dirty = False
+    model.truncated = truncated
     if fmt == "bio" and bio_info:
         # BioEdit's numbering mask designates the sequence whose numbering is used:
         # that is our pinned reference, unless it points at a synthetic mask row.
@@ -126,7 +175,7 @@ def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
             model.mask_row = mi
     if fmt in ("genbank", "embl"):
         try:
-            with open(path, "r", errors="replace") as fh:
+            with open_text(path) as fh:
                 for rec in SeqIO.parse(fh, fmt):
                     topo = str(rec.annotations.get("topology", "")).lower()
                     if topo in ("circular", "linear"):
@@ -139,7 +188,7 @@ def load(path: str, fmt: Optional[str] = None) -> AlignmentModel:
     # hoist GenBank/EMBL features into the model
     if fmt in ("genbank", "embl"):
         from .alignment import Feature
-        with open(path, "r", errors="replace") as fh:
+        with open_text(path) as fh:
             for ri, rec in enumerate(SeqIO.parse(fh, fmt)):
                 L = len(rec.seq)
                 for f in rec.features:
@@ -230,6 +279,8 @@ def dumps(model: AlignmentModel, fmt: str, rows=None) -> str:
 def save(model: AlignmentModel, path: str, fmt: Optional[str] = None):
     fmt = fmt or model.format or (guess_format(path) if os.path.exists(path) else
                                   EXT_TO_FORMAT.get(os.path.splitext(path)[1].lower(), "fasta"))
+    if fmt in READ_ONLY_FORMATS:
+        raise ValueError(f"NeoEdit cannot write {fmt.upper()}; save as FASTA or another format")
     if fmt == "bio":
         BIO.write_bio(path, model.rows, model.seq_type,
                       mask_index=model.mask_row if model.mask_row is not None else -1,

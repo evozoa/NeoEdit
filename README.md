@@ -155,6 +155,9 @@ actually use, on a codebase that can keep evolving:
   full support for BioEdit's own formats: the binary `.bio` project file is read and
   written byte-for-byte as BioEdit 7 writes it, and GenBank can be read/written in
   BioEdit's dialect (top-level `TITLE`, residues in blocks of five).
+  FASTQ reads (`.fastq`, `.fq`) open as sequences, without their quality scores; files with
+  more than 20,000 reads ask before opening the first 20,000. FASTQ is open-only (save as
+  FASTA). Gzipped files (`.gz`) open directly.
 
 ## Install from source (developers)
 

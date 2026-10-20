@@ -92,6 +92,7 @@ class AlignmentModel:
         self._listeners: list[Callable[[str], None]] = []
         self.path: Optional[str] = None
         self.format: Optional[str] = None
+        self.truncated = False      # loaded from a file holding more records than were read
         self.dirty = False
         self._batch: _Edit | None = None
 

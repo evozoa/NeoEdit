@@ -52,3 +52,55 @@ def test_names_are_full_deflines_and_roundtrip(tmp_path):
         g = mio.load(gb)
         assert g.rows[0].name == "NC_012920.1 Homo sapiens mitochondrion, complete genome"
         assert g.seqid(0) == "NC_012920.1"
+
+
+FASTQ = "@r1 sample A\nACGTACGT\n+\nIIIIIIII\n@r2\nGGCCAATT\n+r2\nIIII@@@@\n@r3\nTTTT\n+\nIIII\n"
+
+
+def test_fastq_load(tmp_path):
+    """FASTQ opens as rows named by the read title; qualities are dropped. '@' in a quality
+    line must not be taken for a new record."""
+    p = tmp_path / "reads.fq"
+    p.write_text(FASTQ)
+    assert mio.guess_format(str(p)) == "fastq"
+    m = mio.load(str(p))
+    assert [r.name for r in m.rows] == ["r1 sample A", "r2", "r3"]
+    assert [r.seq for r in m.rows] == ["ACGTACGT", "GGCCAATT", "TTTT"]
+    assert m.rows[0].accession == "r1" and not m.truncated
+
+
+def test_fastq_sniffed_and_gzipped(tmp_path):
+    import gzip
+    p = tmp_path / "reads.txt"
+    p.write_text(FASTQ)
+    assert mio.guess_format(str(p)) == "fastq"
+    gz = tmp_path / "reads.fastq.gz"
+    with gzip.open(gz, "wt") as fh:
+        fh.write(FASTQ)
+    assert mio.guess_format(str(gz)) == "fastq"
+    assert mio.load(str(gz)).nrows == 3
+    fa = tmp_path / "x.fasta.gz"
+    with gzip.open(fa, "wt") as fh:
+        fh.write(">a\nACGT\n")
+    assert mio.load(str(fa)).rows[0].seq == "ACGT"
+
+
+def test_fastq_cap(tmp_path):
+    p = tmp_path / "reads.fastq"
+    p.write_text(FASTQ)
+    m = mio.load(str(p), max_records=2)
+    assert m.nrows == 2 and m.truncated
+    m = mio.load(str(p), max_records=3)
+    assert m.nrows == 3 and not m.truncated
+
+
+def test_fastq_is_read_only(tmp_path):
+    p = tmp_path / "reads.fastq"
+    p.write_text(FASTQ)
+    m = mio.load(str(p))
+    with pytest.raises(ValueError):
+        mio.save(m, str(p))
+    assert p.read_text() == FASTQ
+    out = tmp_path / "reads.fasta"
+    mio.save(m, str(out), "fasta")
+    assert mio.load(str(out)).rows[1].seq == "GGCCAATT"
