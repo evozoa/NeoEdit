@@ -16,7 +16,7 @@ import subprocess
 from dataclasses import dataclass, field
 
 from ..model.alignment import SequenceRow
-from .external import bundled_tool_dir
+from .external import bundled_tool_dir, child_env
 
 IQTREE_SITE = "https://iqtree.github.io/"
 
@@ -96,7 +96,7 @@ def auto_threads_max() -> int:
 
 
 def _popen_kw() -> dict:
-    kw = dict(stdin=subprocess.DEVNULL, env={**os.environ, **IQTREE_ENV})
+    kw = dict(stdin=subprocess.DEVNULL, env=child_env(IQTREE_ENV))
     if os.name == "nt":
         kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return kw
