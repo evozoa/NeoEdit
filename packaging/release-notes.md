@@ -1,8 +1,6 @@
-## What's new in 0.5.0
+## What's new in 0.5.1
 
-- **FASTQ files open in NeoEdit.** *File ▸ Open* and *Import* accept sequencing reads (`.fastq`, `.fq`): each read becomes a row. Quality scores are not kept. A file with more than 20,000 reads asks before opening the first 20,000. To save, choose FASTA or another format; NeoEdit never writes over your original FASTQ.
-- **Compressed files open directly.** Gzipped files (`.fastq.gz`, `.fasta.gz`, …) no longer need unzipping first.
-- **IQ-TREE's Threads box** is wide enough to show "auto (up to N)" in full.
+- **MAFFT and IQ-TREE work again in the Linux package on newer distributions.** On some systems (for example, recent Ubuntu releases), *Genome ▸ Add sequences anchored to reference…* and *Align with MAFFT* failed with "LIBSYSTEMD_254 not found … v7.490 != v7.490". NeoEdit now starts MAFFT and IQ-TREE with your system's own libraries. Windows and Mac are unaffected.
 
 ## Install NeoEdit
 
