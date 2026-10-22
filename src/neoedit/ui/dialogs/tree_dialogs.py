@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, Q
 
 from ...analysis import nj as NJ
 from ...analysis import phylo as PH
+from ...analysis.external import child_env
 from .import_dialog import default_download_dir
 
 ITOL_UPLOAD = "https://itol.embl.de/upload.cgi"
@@ -338,8 +339,8 @@ class IQTreeDialog(TreeDialogBase):
         self.proc = QProcess(self)
         self.proc.setWorkingDirectory(out)
         self.proc.setProcessChannelMode(QProcess.MergedChannels)
-        env = QProcessEnvironment.systemEnvironment()
-        for k, v in PH.IQTREE_ENV.items():
+        env = QProcessEnvironment()
+        for k, v in child_env(PH.IQTREE_ENV).items():
             env.insert(k, v)
         self.proc.setProcessEnvironment(env)
         self.proc.readyReadStandardOutput.connect(self._read)

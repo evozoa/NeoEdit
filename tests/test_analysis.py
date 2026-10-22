@@ -73,3 +73,24 @@ def test_primers():
     assert primer_mismatches(p.right.seq, [tmpl], -1, p.right.start) == [0]
     st = primer_stats("ACGTACGTACGTACGTACGT")
     assert st["tm"] > 0
+
+
+def test_child_env_restores_library_path_in_frozen_linux_build(monkeypatch):
+    """A frozen Linux build must not hand its bundled _internal/ libraries to MAFFT/IQ-TREE."""
+    from neoedit.analysis import external as X
+    monkeypatch.setattr(X.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(X.sys, "platform", "linux")
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/neoedit/_internal")
+    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/home/me/lib")
+    env = X.child_env({"MAFFT_BINARIES": "/x"})
+    assert env["LD_LIBRARY_PATH"] == "/home/me/lib"
+    assert "LD_LIBRARY_PATH_ORIG" not in env and env["MAFFT_BINARIES"] == "/x"
+    monkeypatch.delenv("LD_LIBRARY_PATH_ORIG")
+    assert "LD_LIBRARY_PATH" not in X.child_env()
+
+
+def test_child_env_unchanged_when_not_frozen(monkeypatch):
+    from neoedit.analysis import external as X
+    monkeypatch.delattr(X.sys, "frozen", raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/conda/lib")
+    assert X.child_env()["LD_LIBRARY_PATH"] == "/conda/lib"

@@ -67,14 +67,29 @@ def is_bundled_mafft(exe: str | None) -> bool:
     return bool(exe and d and os.path.abspath(exe).startswith(os.path.abspath(d)))
 
 
+def child_env(extra: dict | None = None) -> dict:
+    """Environment for external tools. A frozen Linux build's bootloader puts the app's
+    `_internal/` first on LD_LIBRARY_PATH (saving the user's value as LD_LIBRARY_PATH_ORIG);
+    children would inherit it and load the bundled, older system libraries (e.g. libsystemd
+    from the Ubuntu 22.04 build host), which breaks the shell tools the `mafft` script runs
+    on newer distributions. Restore the user's own value for child processes."""
+    env = dict(os.environ)
+    if getattr(sys, "frozen", False) and sys.platform.startswith("linux"):
+        orig = env.pop("LD_LIBRARY_PATH_ORIG", None)
+        if orig:
+            env["LD_LIBRARY_PATH"] = orig
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+    env.update(extra or {})
+    return env
+
+
 def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
     """subprocess.run for MAFFT: no console window in a windowed Windows build, no stdin,
-    and MAFFT_BINARIES pointed at the bundled `libexec/` so the `mafft` script finds its
-    binaries wherever the app is installed."""
-    env = None
+    MAFFT_BINARIES pointed at the bundled `libexec/` so the `mafft` script finds its
+    binaries wherever the app is installed, and the user's own library path (child_env)."""
     libexec = os.path.join(os.path.dirname(cmd[0]), "libexec")
-    if os.path.isdir(libexec):
-        env = {**os.environ, "MAFFT_BINARIES": libexec}
+    env = child_env({"MAFFT_BINARIES": libexec} if os.path.isdir(libexec) else None)
     kw = dict(capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, env=env)
     if os.name == "nt":
         kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
